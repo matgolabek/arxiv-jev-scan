@@ -23,6 +23,13 @@ class Stage:
     # choice: answers below this confidence are flagged as maybe (they never reject)
     min_confidence: float = 0.5
 
+    def question(self) -> dict:
+        """The question in the format Jev (and decision-model datasets) expect."""
+        question = {"type": self.type, "instructions": self.instructions}
+        if self.criteria:
+            question["criteria"] = self.criteria
+        return question
+
 
 @dataclass
 class Profile:
@@ -42,6 +49,10 @@ class Profile:
     @property
     def obsidian_dir(self) -> Path:
         return self.data_dir / "obsidian"
+
+    @property
+    def dataset_dir(self) -> Path:
+        return self.data_dir / "dataset"
 
 
 def load_profile(path: str | Path) -> Profile:

@@ -62,11 +62,7 @@ class JevClient:
 
     def ask(self, stage: Stage, state: dict) -> JevAnswer:
         """Ask one stage's question about `state` (the paper's title and abstract)."""
-        question = {"type": stage.type, "instructions": stage.instructions}
-        if stage.criteria:
-            question["criteria"] = stage.criteria
-
-        response = self.client.system_one(state, {stage.name: question})
+        response = self.client.system_one(state, {stage.name: stage.question()})
         answer = response.answers[stage.name]
 
         if stage.type == "noul":

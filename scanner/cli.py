@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from scanner.config import load_profile
 from scanner.db import Database
+from scanner.exporters.dataset import export_dataset
 from scanner.exporters.obsidian import export_accepted
 from scanner.jev_client import JevClient
 from scanner.notify import notify
@@ -81,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
     export = commands.add_parser("export", parents=[common], help="write Obsidian notes for accepted papers")
     export.set_defaults(command=run_export)
 
+    dataset = commands.add_parser(
+        "export-dataset", parents=[common],
+        help="write a training dataset (train.jsonl, test.jsonl) for a local decision model",
+    )
+    dataset.add_argument("--out", help="output folder (default: <data_dir>/dataset)")
+    dataset.set_defaults(command=run_export_dataset)
+
     stats = commands.add_parser("stats", parents=[common], help="show totals and recent scans")
     stats.set_defaults(command=run_stats)
 
@@ -135,6 +143,23 @@ def run_export(args, profile, db) -> int:
     return 0
 
 
+def run_export_dataset(args, profile, db) -> int:
+    out_dir = args.out or profile.dataset_dir
+    summary = export_dataset(db, profile, out_dir)
+    for split in ("train", "test"):
+        log.info(
+            "%s.jsonl: %d papers, %d relevant", split, summary.rows[split], summary.relevant[split]
+        )
+    log.info(
+        "Gold relevance from your labels: %d, from Jev: %d. Skipped %d unlabelled maybe papers.",
+        summary.label_sources["human"], summary.label_sources["jev"], summary.skipped_maybe,
+    )
+    if summary.rows["test"] == 0:
+        log.warning("The test set is empty. Label papers in the dashboard's Label tab (test sample).")
+    log.info("Wrote %s", out_dir)
+    return 0
+
+
 def run_stats(args, profile, db) -> int:
     totals = db.totals()
     print(f"Topic:     {profile.topic}")
@@ -143,6 +168,9 @@ def run_stats(args, profile, db) -> int:
           f"rejected {totals['rejected']}, pending {totals['pending']})")
     print(f"Jev calls: {totals['jev_calls']}, {totals['input_tokens']:,} input tokens, "
           f"cost ${totals['cost_usd']:.4f}")
+    labels = db.label_counts()
+    print(f"Labels:    {labels['train']} train, {labels['test']} test, "
+          f"{labels['maybe_left']} maybe papers still unlabelled")
     print("\nRecent scans:")
     for run in db.get_runs(limit=10):
         params = run["query_params"]
