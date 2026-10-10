@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from scanner.config import load_profile
 from scanner.db import Database
-from scanner.exporters.dataset import export_dataset
+from scanner.exporters.dataset import export_dataset, push_dataset, read_labels_file, write_labels_file
 from scanner.exporters.obsidian import export_accepted
 from scanner.jev_client import JevClient
 from scanner.notify import notify
@@ -87,7 +87,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="write a training dataset (train.jsonl, test.jsonl) for a local decision model",
     )
     dataset.add_argument("--out", help="output folder (default: <data_dir>/dataset)")
+    dataset.add_argument(
+        "--push", metavar="USER/REPO",
+        help="also upload it to this Hugging Face dataset repository (log in first: hf auth login)",
+    )
+    dataset.add_argument(
+        "--public", action="store_true", help="create the repository as public (default: private)",
+    )
     dataset.set_defaults(command=run_export_dataset)
+
+    labels = commands.add_parser("labels", help="save your labels to a file, or load them back")
+    label_commands = labels.add_subparsers(title="label commands", dest="labels_command", required=True)
+    labels_export = label_commands.add_parser(
+        "export", parents=[common], help="write your labels to a JSON lines file",
+    )
+    labels_export.add_argument("--out", help="file to write (default: <data_dir>/labels.jsonl)")
+    labels_export.set_defaults(command=run_labels_export)
+    labels_import = label_commands.add_parser(
+        "import", parents=[common], help="load labels from a file written by 'labels export'",
+    )
+    labels_import.add_argument("file", help="labels.jsonl to load")
+    labels_import.set_defaults(command=run_labels_import)
 
     stats = commands.add_parser("stats", parents=[common], help="show totals and recent scans")
     stats.set_defaults(command=run_stats)
@@ -157,6 +177,30 @@ def run_export_dataset(args, profile, db) -> int:
     if summary.rows["test"] == 0:
         log.warning("The test set is empty. Label papers in the dashboard's Label tab (test sample).")
     log.info("Wrote %s", out_dir)
+
+    if args.push:
+        url = push_dataset(out_dir, args.push, public=args.public)
+        log.info("Pushed to %s", url)
+    return 0
+
+
+def run_labels_export(args, profile, db) -> int:
+    path = args.out or profile.data_dir / "labels.jsonl"
+    count = write_labels_file(db, path)
+    log.info("Wrote %d labels to %s", count, path)
+    return 0
+
+
+def run_labels_import(args, profile, db) -> int:
+    counts = db.import_labels(read_labels_file(args.file))
+    log.info(
+        "Labels: %d added, %d updated, %d already up to date",
+        counts["added"], counts["updated"], counts["unchanged"],
+    )
+    known = set(db.get_labels()) & {paper["paper_id"] for paper in db.get_papers()}
+    waiting = len(db.get_labels()) - len(known)
+    if waiting:
+        log.info("%d labels are for papers not scanned yet; they apply once you scan them.", waiting)
     return 0
 
 

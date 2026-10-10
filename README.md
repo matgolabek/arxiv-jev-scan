@@ -149,6 +149,7 @@ python -m scanner.cli download-all                    # PDFs of accepted papers
 python -m scanner.cli download-all --status accepted,maybe
 python -m scanner.cli export                          # Obsidian notes, also done after every scan
 python -m scanner.cli stats                           # totals, label counts and recent scans
+python -m scanner.cli labels export                   # back up your labels
 ```
 
 `download-all` skips papers whose PDF is already downloaded, so running it again only fetches what
@@ -184,6 +185,8 @@ data/dataset/
   train.jsonl      every paper with a known answer, except the test sample
   test.jsonl       the papers you labelled from the test sample
   manifest.json    row counts, relevant vs not, where the labels came from
+  labels.jsonl     a backup of your labels (see below)
+  README.md        dataset card for the Hugging Face Hub
 ```
 
 Each line uses the row format of Unsloth's decision-model trainer: `state` (title and abstract),
@@ -195,6 +198,39 @@ models later, plus `id`, `split`, `label_source` (`human` or `jev`) and `publish
 
 Relevant papers are rare, so scan enough days to have at least a hundred or so of them before
 training. Before publishing a model trained on Jev's answers, check TypeSafe's terms of service.
+
+#### Sharing the dataset through the Hugging Face Hub
+
+Keep the dataset out of git: every export rewrites the files, so each one would stay in the
+history forever, and two branches with different exports can't be merged. A Hugging Face dataset
+repository versions every upload and loads straight into Colab. Log in once
+(`hf auth login`, with a token that can write), then export and upload in one go:
+
+```bash
+python -m scanner.cli export-dataset --push your-name/arxiv-event-cameras
+```
+
+The repository is created as private unless you add `--public`. In Colab:
+
+```python
+from datasets import load_dataset
+dataset = load_dataset("your-name/arxiv-event-cameras")   # splits: train, test
+```
+
+#### Backing up your labels
+
+Your labels are the only part of this that costs your time, and they live in `papers.db`. Save
+them to a small file, and load them back on another machine or into a fresh database:
+
+```bash
+python -m scanner.cli labels export                 # writes data/labels.jsonl
+python -m scanner.cli labels import labels.jsonl
+```
+
+`export-dataset` also writes `labels.jsonl` into the dataset folder, so `--push` backs them up.
+Importing keeps the newer label when both sides labelled a paper. Labels for papers you have not
+scanned yet are kept and apply once a scan reaches them, so on a new machine you can import first
+and scan afterwards.
 
 ## Where your data goes
 

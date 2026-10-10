@@ -17,6 +17,10 @@ Where the gold answers come from:
 Papers you labelled from the test sample go to test.jsonl, everything else to
 train.jsonl. Never train on the test file: it is what tells you how a model
 compares with Jev.
+
+The folder also gets labels.jsonl (a backup of your labels, see
+`write_labels_file`) and a README.md dataset card, so it can be pushed to a
+Hugging Face dataset repository as is and loaded with `load_dataset`.
 """
 
 import json
@@ -106,7 +110,8 @@ def stage_gold(stage: Stage, result: dict | None) -> bool | dict | None:
 
 
 def export_dataset(db: Database, profile: Profile, out_dir: Path | None = None) -> DatasetSummary:
-    """Write train.jsonl, test.jsonl and manifest.json. Returns what was written."""
+    """Write train.jsonl, test.jsonl, manifest.json, labels.jsonl and README.md.
+    Returns what was written."""
     out_dir = Path(out_dir or profile.dataset_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     rows, summary = build_rows(db, profile)
@@ -135,4 +140,80 @@ def export_dataset(db: Database, profile: Profile, out_dir: Path | None = None) 
         "skipped_unlabelled_maybe": summary.skipped_maybe,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (out_dir / "README.md").write_text(dataset_card(profile, summary), encoding="utf-8")
+    write_labels_file(db, out_dir / "labels.jsonl")
     return summary
+
+
+def dataset_card(profile: Profile, summary: DatasetSummary) -> str:
+    """README.md for the Hugging Face Hub. The `configs` header tells
+    `load_dataset` which files are the splits, so labels.jsonl and
+    manifest.json are not mistaken for data. Empty splits are left out
+    because the Hub cannot load an empty file."""
+    splits = [split for split in ("train", "test") if summary.rows[split]]
+    data_files = "".join(f"  - split: {split}\n    path: {split}.jsonl\n" for split in splits)
+    header = f"---\nconfigs:\n- config_name: default\n  data_files:\n{data_files}---\n\n" if splits else ""
+    counts = "\n".join(
+        f"| {split} | {summary.rows[split]} | {summary.relevant[split]} |" for split in ("train", "test")
+    )
+    return f"""{header}# {profile.topic}: arXiv relevance dataset
+
+Made with [arxiv-jev-scan](https://github.com/matgolabek/arxiv-jev-scan) (`export-dataset`).
+Rows follow the format of Unsloth's decision-model trainer: `state` (title and abstract),
+`questions` and `gold`, each a JSON string. Gold relevance is a human label where there is one,
+otherwise Jev's decision. `test` holds only human-labelled papers and must not be trained on.
+
+| split | papers | relevant |
+|---|---|---|
+{counts}
+
+Also here: `labels.jsonl` (the human labels, for `python -m scanner.cli labels import`) and
+`manifest.json` (counts). Titles and abstracts are arXiv metadata, released under CC0.
+"""
+
+
+def write_labels_file(db: Database, path: Path) -> int:
+    """Save your labels as JSON lines. Returns how many were written."""
+    labels = db.export_labels()
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with Path(path).open("w", encoding="utf-8") as file:
+        for label in labels:
+            file.write(json.dumps(label, ensure_ascii=False) + "\n")
+    return len(labels)
+
+
+def read_labels_file(path: Path) -> list[dict]:
+    with Path(path).open(encoding="utf-8") as file:
+        return [json.loads(line) for line in file if line.strip()]
+
+
+def push_dataset(out_dir: Path, repo_id: str, public: bool = False) -> str:
+    """Upload the exported folder to a Hugging Face dataset repository,
+    creating it (private unless `public`) if needed. Returns its URL.
+
+    Log in once with `hf auth login`, or set HF_TOKEN.
+    """
+    try:
+        from huggingface_hub import HfApi
+    except ImportError:
+        raise RuntimeError("Pushing needs huggingface_hub: pip install huggingface_hub") from None
+
+    manifest = json.loads((Path(out_dir) / "manifest.json").read_text(encoding="utf-8"))
+    files = manifest["files"]
+    api = HfApi()
+    try:
+        url = api.create_repo(repo_id, repo_type="dataset", private=not public, exist_ok=True)
+        api.upload_folder(
+            repo_id=repo_id,
+            repo_type="dataset",
+            folder_path=str(out_dir),
+            allow_patterns=["*.jsonl", "manifest.json", "README.md"],
+            commit_message=(
+                f"Export: {files['train.jsonl']['rows']} train, {files['test.jsonl']['rows']} test papers"
+            ),
+        )
+    except Exception as error:  # not logged in, no access, network...
+        raise RuntimeError(
+            f"Could not push to {repo_id}: {error}. Log in with 'hf auth login' or set HF_TOKEN."
+        ) from error
+    return str(url)

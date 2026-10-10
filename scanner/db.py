@@ -230,6 +230,46 @@ class Database:
                 (paper_id, int(relevant), split, now(), split),
             )
 
+    def import_labels(self, labels: list[dict]) -> dict[str, int]:
+        """Merge labels saved by `export_labels`, e.g. on a new machine or after
+        losing the database. Where both sides labelled a paper, the newer label
+        wins. Labels for papers not scanned yet are kept and apply once they are.
+        """
+        existing = self.get_labels()
+        counts = {"added": 0, "updated": 0, "unchanged": 0}
+        with self.conn:
+            for label in labels:
+                if label["split"] not in SPLITS:
+                    raise ValueError(f"{label['paper_id']}: split must be one of {SPLITS}")
+                current = existing.get(label["paper_id"])
+                if current and current["labelled_at"] >= label["labelled_at"]:
+                    counts["unchanged"] += 1
+                    continue
+                self.conn.execute(
+                    """INSERT OR REPLACE INTO labels (paper_id, relevant, split, labelled_at)
+                       VALUES (?, ?, ?, ?)""",
+                    (label["paper_id"], int(label["relevant"]), label["split"], label["labelled_at"]),
+                )
+                counts["updated" if current else "added"] += 1
+        return counts
+
+    def export_labels(self) -> list[dict]:
+        """All labels with the paper title (for readability), oldest first."""
+        rows = self.conn.execute(
+            """SELECT l.*, p.title FROM labels l LEFT JOIN papers p USING (paper_id)
+               ORDER BY l.labelled_at, l.paper_id"""
+        )
+        return [
+            {
+                "paper_id": row["paper_id"],
+                "relevant": bool(row["relevant"]),
+                "split": row["split"],
+                "labelled_at": row["labelled_at"],
+                "title": row["title"],
+            }
+            for row in rows
+        ]
+
     def remove_label(self, paper_id: str) -> None:
         with self.conn:
             self.conn.execute("DELETE FROM labels WHERE paper_id = ?", (paper_id,))
