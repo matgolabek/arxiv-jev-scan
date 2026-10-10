@@ -242,3 +242,17 @@ def test_cli_labels_export_and_import(tmp_path):
     assert main(["labels", "import", str(labels), "--config", str(config)]) == 0
     assert main(["labels", "export", "--config", str(config)]) == 0
     assert read_labels_file(tmp_path / "data" / "labels.jsonl")[0]["paper_id"] == "1"
+
+
+def test_cli_labels_import_defaults_to_the_exported_file_and_explains_a_missing_one(tmp_path, caplog):
+    config = tmp_path / "profile.yaml"
+    config.write_text(
+        f"topic: Test\ndata_dir: {tmp_path / 'data'}\nsource:\n  categories: [cs.CV]\n"
+        "stages:\n  - name: relevance\n    type: noul\n    instructions: Relevant?\n"
+    )
+
+    assert main(["labels", "import", "labels.jsonl", "--config", str(config)]) == 1
+    assert "No labels file at labels.jsonl" in caplog.text
+
+    assert main(["labels", "export", "--config", str(config)]) == 0
+    assert main(["labels", "import", "--config", str(config)]) == 0

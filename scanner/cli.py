@@ -4,6 +4,7 @@ import argparse
 import logging
 import sys
 from datetime import date
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -106,7 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
     labels_import = label_commands.add_parser(
         "import", parents=[common], help="load labels from a file written by 'labels export'",
     )
-    labels_import.add_argument("file", help="labels.jsonl to load")
+    labels_import.add_argument(
+        "file", nargs="?", help="labels file to load (default: <data_dir>/labels.jsonl)",
+    )
     labels_import.set_defaults(command=run_labels_import)
 
     stats = commands.add_parser("stats", parents=[common], help="show totals and recent scans")
@@ -185,14 +188,21 @@ def run_export_dataset(args, profile, db) -> int:
 
 
 def run_labels_export(args, profile, db) -> int:
-    path = args.out or profile.data_dir / "labels.jsonl"
+    path = args.out or profile.labels_path
     count = write_labels_file(db, path)
     log.info("Wrote %d labels to %s", count, path)
     return 0
 
 
 def run_labels_import(args, profile, db) -> int:
-    counts = db.import_labels(read_labels_file(args.file))
+    path = Path(args.file or profile.labels_path)
+    if not path.is_file():
+        raise RuntimeError(
+            f"No labels file at {path}. Pass the path of your backup, e.g. "
+            f"{profile.labels_path} (from 'labels export') or {profile.dataset_dir / 'labels.jsonl'} "
+            "(from 'export-dataset')."
+        )
+    counts = db.import_labels(read_labels_file(path))
     log.info(
         "Labels: %d added, %d updated, %d already up to date",
         counts["added"], counts["updated"], counts["unchanged"],

@@ -224,7 +224,8 @@ them to a small file, and load them back on another machine or into a fresh data
 
 ```bash
 python -m scanner.cli labels export                 # writes data/labels.jsonl
-python -m scanner.cli labels import labels.jsonl
+python -m scanner.cli labels import                 # reads data/labels.jsonl
+python -m scanner.cli labels import path/to/labels.jsonl   # or any other backup
 ```
 
 `export-dataset` also writes `labels.jsonl` into the dataset folder, so `--push` backs them up.

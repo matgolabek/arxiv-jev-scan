@@ -51,6 +51,10 @@ class Profile:
         return self.data_dir / "obsidian"
 
     @property
+    def labels_path(self) -> Path:
+        return self.data_dir / "labels.jsonl"
+
+    @property
     def dataset_dir(self) -> Path:
         return self.data_dir / "dataset"
 
