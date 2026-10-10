@@ -1,5 +1,6 @@
 """SQLite storage, the source of truth: every paper we have seen, every Jev
-answer and every scan run (so an interrupted scan can resume)."""
+answer, every scan run (so an interrupted scan can resume) and your own
+relevance labels (for building a training dataset)."""
 
 import json
 import sqlite3
@@ -8,7 +9,7 @@ from pathlib import Path
 
 from scanner.models import Paper, StageResult
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers (
@@ -53,10 +54,21 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     status       TEXT NOT NULL           -- running | completed | interrupted
 );
 
+-- Your answer to the relevance question, which overrides Jev's in the dataset.
+-- split 'test' marks the hand-checked papers held out for evaluation.
+CREATE TABLE IF NOT EXISTS labels (
+    paper_id    TEXT PRIMARY KEY REFERENCES papers(paper_id),
+    relevant    INTEGER NOT NULL,        -- 1 yes, 0 no
+    split       TEXT NOT NULL,           -- train | test
+    labelled_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS papers_by_status ON papers(final_status);
 """
 
 STATUSES = ("pending", "accepted", "maybe", "rejected")
+CLASSIFIED = ("accepted", "maybe", "rejected")
+SPLITS = ("train", "test")
 
 
 def now() -> str:
@@ -165,6 +177,14 @@ class Database:
         )
         return [dict(row) | {"result": json.loads(row["result"])} for row in rows]
 
+    def get_all_stage_results(self) -> dict[str, dict[str, dict]]:
+        """paper_id -> {stage name: stage result}, for every classified paper."""
+        results: dict[str, dict[str, dict]] = {}
+        for row in self.conn.execute("SELECT * FROM stage_results ORDER BY rowid"):
+            result = dict(row) | {"result": json.loads(row["result"])}
+            results.setdefault(row["paper_id"], {})[row["stage_name"]] = result
+        return results
+
     def mark_downloaded(self, paper_id: str, pdf_path: str) -> None:
         with self.conn:
             self.conn.execute(
@@ -191,6 +211,135 @@ class Database:
         ).fetchone()
         totals["input_tokens"], totals["output_tokens"], totals["cost_usd"], totals["jev_calls"] = usage
         return totals
+
+    # --- labels -------------------------------------------------------------
+
+    def set_label(self, paper_id: str, relevant: bool, split: str | None = None) -> None:
+        """Store your yes/no answer for a paper. Without `split`, a paper that is
+        already labelled keeps its split and a new one goes to 'train'."""
+        if split is not None and split not in SPLITS:
+            raise ValueError(f"split must be one of {SPLITS}, got {split!r}")
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO labels (paper_id, relevant, split, labelled_at)
+                   VALUES (?, ?, COALESCE(?, 'train'), ?)
+                   ON CONFLICT (paper_id) DO UPDATE SET
+                       relevant = excluded.relevant,
+                       split = COALESCE(?, labels.split),
+                       labelled_at = excluded.labelled_at""",
+                (paper_id, int(relevant), split, now(), split),
+            )
+
+    def import_labels(self, labels: list[dict]) -> dict[str, int]:
+        """Merge labels saved by `export_labels`, e.g. on a new machine or after
+        losing the database. Where both sides labelled a paper, the newer label
+        wins. Labels for papers not scanned yet are kept and apply once they are.
+        """
+        existing = self.get_labels()
+        counts = {"added": 0, "updated": 0, "unchanged": 0}
+        with self.conn:
+            for label in labels:
+                if label["split"] not in SPLITS:
+                    raise ValueError(f"{label['paper_id']}: split must be one of {SPLITS}")
+                current = existing.get(label["paper_id"])
+                if current and current["labelled_at"] >= label["labelled_at"]:
+                    counts["unchanged"] += 1
+                    continue
+                self.conn.execute(
+                    """INSERT OR REPLACE INTO labels (paper_id, relevant, split, labelled_at)
+                       VALUES (?, ?, ?, ?)""",
+                    (label["paper_id"], int(label["relevant"]), label["split"], label["labelled_at"]),
+                )
+                counts["updated" if current else "added"] += 1
+        return counts
+
+    def export_labels(self) -> list[dict]:
+        """All labels with the paper title (for readability), oldest first."""
+        rows = self.conn.execute(
+            """SELECT l.*, p.title FROM labels l LEFT JOIN papers p USING (paper_id)
+               ORDER BY l.labelled_at, l.paper_id"""
+        )
+        return [
+            {
+                "paper_id": row["paper_id"],
+                "relevant": bool(row["relevant"]),
+                "split": row["split"],
+                "labelled_at": row["labelled_at"],
+                "title": row["title"],
+            }
+            for row in rows
+        ]
+
+    def remove_label(self, paper_id: str) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM labels WHERE paper_id = ?", (paper_id,))
+
+    def get_labels(self) -> dict[str, dict]:
+        """paper_id -> {relevant: bool, split, labelled_at}"""
+        return {
+            row["paper_id"]: {
+                "relevant": bool(row["relevant"]),
+                "split": row["split"],
+                "labelled_at": row["labelled_at"],
+            }
+            for row in self.conn.execute("SELECT * FROM labels")
+        }
+
+    def label_counts(self) -> dict:
+        """How many papers you labelled, per split and per Jev status."""
+        counts = {
+            "train": 0, "test": 0, "maybe_left": 0,
+            "test_by_status": {status: 0 for status in CLASSIFIED},
+        }
+        for row in self.conn.execute(
+            """SELECT l.split, p.final_status, COUNT(*) AS n
+               FROM labels l JOIN papers p USING (paper_id) GROUP BY l.split, p.final_status"""
+        ):
+            counts[row["split"]] += row["n"]
+            if row["split"] == "test" and row["final_status"] in CLASSIFIED:
+                counts["test_by_status"][row["final_status"]] += row["n"]
+        counts["maybe_left"] = self.conn.execute(
+            """SELECT COUNT(*) FROM papers
+               WHERE final_status = 'maybe'
+                 AND paper_id NOT IN (SELECT paper_id FROM labels)"""
+        ).fetchone()[0]
+        return counts
+
+    def next_unlabelled_maybe(self, skip: list[str] = ()) -> dict | None:
+        """The most likely relevant 'maybe' paper you have not labelled yet."""
+        placeholders = ", ".join(["?"] * len(skip))
+        row = self.conn.execute(
+            f"""SELECT * FROM papers
+                WHERE final_status = 'maybe'
+                  AND paper_id NOT IN (SELECT paper_id FROM labels)
+                  AND paper_id NOT IN ({placeholders})
+                ORDER BY relevance DESC, paper_id LIMIT 1""",
+            list(skip),
+        ).fetchone()
+        return _decode_paper(row) if row else None
+
+    def next_test_candidate(self, skip: list[str] = ()) -> dict | None:
+        """A random unlabelled paper for the test set, drawn from the Jev status
+        (accepted, maybe, rejected) that has the fewest test labels so far.
+
+        Mostly rejected papers come out of a scan, so a plain random sample
+        would hold almost no relevant ones. Balancing by status keeps enough of
+        each kind to measure how many relevant papers a model misses.
+        """
+        counts = self.label_counts()["test_by_status"]
+        placeholders = ", ".join(["?"] * len(skip))
+        for status in sorted(CLASSIFIED, key=lambda status: counts[status]):
+            row = self.conn.execute(
+                f"""SELECT * FROM papers
+                    WHERE final_status = ?
+                      AND paper_id NOT IN (SELECT paper_id FROM labels)
+                      AND paper_id NOT IN ({placeholders})
+                    ORDER BY random() LIMIT 1""",
+                [status, *skip],
+            ).fetchone()
+            if row:
+                return _decode_paper(row)
+        return None
 
     # --- scan runs --------------------------------------------------------
 

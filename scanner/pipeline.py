@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from scanner.config import Profile, Stage
 from scanner.db import Database
 from scanner.jev_client import FATAL_ERRORS, JevClient
-from scanner.models import Paper, Progress, StageResult
+from scanner.models import Paper, Progress, StageResult, paper_state
 from scanner.sources.base import PaperSource
 
 log = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ class Pipeline:
 
         Stops at the first reject, so most papers cost a single Jev call.
         """
-        state = {"title": paper.title, "abstract": paper.abstract}
+        state = paper_state(paper.title, paper.abstract)
         results = []
         for stage in self.profile.stages:
             answer = self.jev.ask(stage, state)

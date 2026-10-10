@@ -7,6 +7,12 @@ from dataclasses import dataclass
 Progress = Callable[[float, str], None]
 
 
+def paper_state(title: str, abstract: str) -> dict:
+    """What the model is shown about a paper. Training data must use the same
+    state as the scan, so both build it here."""
+    return {"title": title, "abstract": abstract}
+
+
 @dataclass
 class Paper:
     paper_id: str          # e.g. "2409.01234" for arXiv

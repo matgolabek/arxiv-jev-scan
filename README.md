@@ -148,11 +148,90 @@ This opens http://localhost:8501 in your browser. From there you can:
 python -m scanner.cli download-all                    # PDFs of accepted papers
 python -m scanner.cli download-all --status accepted,maybe
 python -m scanner.cli export                          # Obsidian notes, also done after every scan
-python -m scanner.cli stats                           # totals and recent scans
+python -m scanner.cli stats                           # totals, label counts and recent scans
+python -m scanner.cli labels export                   # back up your labels
 ```
 
 `download-all` skips papers whose PDF is already downloaded, so running it again only fetches what
 is missing.
+
+### Labelling papers and building a training dataset
+
+This fork aims to replace Jev with a free local decision model (Laya, or a Qwen model fine-tuned
+with [Unsloth](https://unsloth.ai/docs/basics/train-your-own-decision-model-with-unsloth), for
+example on a free Colab GPU). The first step is a dataset: Jev's answers serve as the teacher, and
+your own labels fix the cases it was unsure about or got wrong.
+
+In the dashboard, the **Label** tab has two queues:
+
+- **Maybe papers.** Papers Jev was unsure about, most likely relevant first. Answer Relevant or
+  Not relevant. These become training data. Maybe papers you don't label are left out of the
+  dataset, since nobody knows their answer.
+- **Test sample.** Random papers, balanced between those Jev accepted, rejected and was unsure
+  about, with Jev's answer hidden. They are held out and never trained on, so they show how a
+  local model compares with Jev. A few hundred is a good size.
+
+You can also label any paper from its details in the Relevant, Maybe and Rejected tabs, for
+example when you spot a mistake. The "You" column shows your labels.
+
+Then export the dataset:
+
+```bash
+python -m scanner.cli export-dataset          # writes data/dataset/
+```
+
+```
+data/dataset/
+  train.jsonl      every paper with a known answer, except the test sample
+  test.jsonl       the papers you labelled from the test sample
+  manifest.json    row counts, relevant vs not, where the labels came from
+  labels.jsonl     a backup of your labels (see below)
+  README.md        dataset card for the Hugging Face Hub
+```
+
+Each line uses the row format of Unsloth's decision-model trainer: `state` (title and abstract),
+`questions` (the stages from your config) and `gold` (the answers), each as a JSON string. The
+relevance answer is your label when you gave one, otherwise Jev's accept or reject. Later stages
+are only asked for papers that are relevant, with Jev's answers as gold; choice stages keep Jev's
+probabilities as soft labels. Each line also carries `jev` with Jev's raw answers, for comparing
+models later, plus `id`, `split`, `label_source` (`human` or `jev`) and `published`.
+
+Relevant papers are rare, so scan enough days to have at least a hundred or so of them before
+training. Before publishing a model trained on Jev's answers, check TypeSafe's terms of service.
+
+#### Sharing the dataset through the Hugging Face Hub
+
+Keep the dataset out of git: every export rewrites the files, so each one would stay in the
+history forever, and two branches with different exports can't be merged. A Hugging Face dataset
+repository versions every upload and loads straight into Colab. Log in once
+(`hf auth login`, with a token that can write), then export and upload in one go:
+
+```bash
+python -m scanner.cli export-dataset --push your-name/arxiv-event-cameras
+```
+
+The repository is created as private unless you add `--public`. In Colab:
+
+```python
+from datasets import load_dataset
+dataset = load_dataset("your-name/arxiv-event-cameras")   # splits: train, test
+```
+
+#### Backing up your labels
+
+Your labels are the only part of this that costs your time, and they live in `papers.db`. Save
+them to a small file, and load them back on another machine or into a fresh database:
+
+```bash
+python -m scanner.cli labels export                 # writes data/labels.jsonl
+python -m scanner.cli labels import                 # reads data/labels.jsonl
+python -m scanner.cli labels import path/to/labels.jsonl   # or any other backup
+```
+
+`export-dataset` also writes `labels.jsonl` into the dataset folder, so `--push` backs them up.
+Importing keeps the newer label when both sides labelled a paper. Labels for papers you have not
+scanned yet are kept and apply once a scan reaches them, so on a new machine you can import first
+and scan afterwards.
 
 ## Where your data goes
 
@@ -161,6 +240,7 @@ data/
   papers.db        SQLite database: papers, every Jev answer, scan runs
   pdfs/            downloaded PDFs, named after the arXiv id
   obsidian/        one Markdown note per accepted paper
+  dataset/         training dataset from `export-dataset`
 ```
 
 `data/` is in `.gitignore`. To read your papers on another device, open `data/obsidian` as an
@@ -228,6 +308,7 @@ scanner/
   db.py                   SQLite schema and queries
   pdfs.py                 single and bulk PDF downloads
   exporters/obsidian.py   Markdown export
+  exporters/dataset.py    training dataset export (train.jsonl, test.jsonl)
   notify.py               desktop notification
   cli.py                  command line interface
 app.py                    Streamlit dashboard

@@ -9,5 +9,6 @@ networkx>=3.0            # paper graph
 pyvis>=0.3.2             # interactive graph rendering
 
 plyer>=2.1               # desktop notifications
+huggingface_hub>=0.25    # export-dataset --push
 
 pytest>=8.0

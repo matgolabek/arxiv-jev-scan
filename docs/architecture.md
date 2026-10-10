@@ -93,6 +93,25 @@ shows it read-only and lets you pick a config file, and each config has its own 
 - Desktop notifications go through `plyer` and are best effort, so a missing backend never fails a
   scan.
 
+### 7. Labels and a training dataset for a local model
+
+Jev is a paid API. To replace it with a free local decision model, the database also keeps your
+own relevance labels in a `labels` table (schema version 2; older databases gain the table when
+opened).
+
+- Jev's accept and reject decisions are the default gold answers, so a scan builds a dataset at
+  no extra effort. Your label overrides Jev's, which is how "maybe" papers and Jev's mistakes get
+  an answer.
+- Each label has a split. Papers labelled from the dashboard's test sample are `test` and are
+  never written to `train.jsonl`. The sample is balanced across Jev's accepted, maybe and rejected
+  papers, because a plain random sample would hold almost no relevant papers and could not
+  measure how many a model misses. Jev's answer is hidden while labelling it.
+- Labels answer the relevance question only. Later stages take Jev's answers as gold and are
+  only asked for relevant papers, because their questions assume an on-topic paper.
+- The export uses the row format of Unsloth's decision-model trainer (`state`, `questions`,
+  `gold` as JSON strings), and the state is built by the same function the scan uses, so a model
+  trained on it sees exactly what Jev saw.
+
 ## Consequences
 
 - Getting started is easy: install, add a key, run. There is nothing to host.

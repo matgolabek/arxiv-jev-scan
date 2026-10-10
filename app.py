@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from graph_view import GRAPH_MODES, build_graph, tag_colors, to_html
 from scanner.config import Profile, load_profile
 from scanner.db import Database
+from scanner.exporters.dataset import relevance_stage
 from scanner.exporters.obsidian import export_accepted
 from scanner.jev_client import JevClient
 from scanner.pdfs import download_all, download_pdf
@@ -18,6 +19,7 @@ from scanner.pipeline import Pipeline, since_last_run, utc_today
 from scanner.sources import ArxivSource
 
 DECISION_COLORS = {"accept": "green", "maybe": "orange", "reject": "red"}
+LABEL_NAMES = {True: "yes", False: "no"}
 MAX_GRAPH_PAPERS = 1500  # bigger graphs get slow in the browser
 
 load_dotenv()
@@ -42,8 +44,12 @@ def main() -> None:
 
     download_controls(profile, db)
     papers = pd.DataFrame(db.get_papers())
+    labels = db.get_labels()
+    papers["label"] = papers["paper_id"].map(
+        lambda paper_id: LABEL_NAMES[labels[paper_id]["relevant"]] if paper_id in labels else ""
+    )
 
-    tabs = st.tabs(["Relevant", "Maybe", "Rejected", "Downloaded", "Graph"])
+    tabs = st.tabs(["Relevant", "Maybe", "Rejected", "Label", "Downloaded", "Graph"])
     with tabs[0]:
         paper_table(papers[papers.final_status == "accepted"], "relevant", profile, db)
     with tabs[1]:
@@ -51,8 +57,10 @@ def main() -> None:
     with tabs[2]:
         paper_table(papers[papers.final_status == "rejected"], "rejected", profile, db)
     with tabs[3]:
-        downloaded_table(papers)
+        label_tab(profile, db)
     with tabs[4]:
+        downloaded_table(papers)
+    with tabs[5]:
         graph_tab(papers)
 
 
@@ -157,6 +165,7 @@ def paper_table(papers: pd.DataFrame, key: str, profile: Profile, db: Database) 
         "Published": papers["published_date"],
         "Relevance": papers["relevance"],
         "Tags": papers["tags"].apply(list),
+        "You": papers["label"],
         "PDF": papers["pdf_path"].notna(),
         "Link": papers["url"],
     })
@@ -170,6 +179,7 @@ def paper_table(papers: pd.DataFrame, key: str, profile: Profile, db: Database) 
             "Title": st.column_config.TextColumn(width="large"),
             "Relevance": st.column_config.ProgressColumn(min_value=0.0, max_value=1.0, format="%.2f"),
             "Tags": st.column_config.ListColumn(),
+            "You": st.column_config.TextColumn(help="Your own relevance label, see the Label tab"),
             "PDF": st.column_config.CheckboxColumn(help="Already downloaded"),
             "Link": st.column_config.LinkColumn(display_text="arXiv"),
         },
@@ -192,7 +202,23 @@ def paper_details(paper: pd.Series, key: str, profile: Profile, db: Database) ->
         with stages:
             for result in db.get_stage_results(paper["paper_id"]):
                 show_stage_result(result)
+        label_buttons(paper["paper_id"], paper["label"], key, db)
         pdf_buttons(paper, key, profile, db)
+
+
+def label_buttons(paper_id: str, current: str, key: str, db: Database) -> None:
+    """Your own answer to the relevance question, used for the training dataset."""
+    text, yes, no, clear, _ = st.columns([2, 1, 1, 1, 3], vertical_alignment="center")
+    text.caption(f"Your label: **{current or 'none'}**")
+    if yes.button("Relevant", key=f"label-yes-{key}"):
+        db.set_label(paper_id, True)
+        st.rerun()
+    if no.button("Not relevant", key=f"label-no-{key}"):
+        db.set_label(paper_id, False)
+        st.rerun()
+    if current and clear.button("Clear", key=f"label-clear-{key}"):
+        db.remove_label(paper_id)
+        st.rerun()
 
 
 def show_stage_result(result: dict) -> None:
@@ -219,6 +245,84 @@ def pdf_buttons(paper: pd.Series, key: str, profile: Profile, db: Database) -> N
         with st.spinner("Downloading from arXiv..."):
             download_pdf(db, paper.to_dict(), profile.pdf_dir)
         st.rerun()
+
+
+# --- labelling -------------------------------------------------------------
+
+LABEL_QUEUES = {
+    "maybe": "Maybe papers (training data)",
+    "test": "Test sample (held out for evaluation)",
+}
+
+
+def label_tab(profile: Profile, db: Database) -> None:
+    counts = db.label_counts()
+    by_status = counts["test_by_status"]
+    columns = st.columns(3)
+    columns[0].metric("Maybe papers left", f"{counts['maybe_left']:,}")
+    columns[1].metric("Training labels", f"{counts['train']:,}")
+    columns[2].metric(
+        "Test labels", f"{counts['test']:,}",
+        help=f"Drawn from Jev's accepted {by_status['accepted']}, maybe {by_status['maybe']}, "
+             f"rejected {by_status['rejected']}",
+    )
+
+    queue = st.radio("Label", list(LABEL_QUEUES), format_func=LABEL_QUEUES.get, horizontal=True)
+    if queue == "maybe":
+        st.caption(
+            "Papers Jev was unsure about, most likely relevant first. Your answers become "
+            "training data; unlabelled maybe papers are left out of the dataset."
+        )
+    else:
+        st.caption(
+            "Random papers, balanced between those Jev accepted, rejected and was unsure about. "
+            "They are never trained on, so they show how a local model compares with Jev. "
+            "Jev's answer is hidden so it doesn't sway you. Aim for a few hundred."
+        )
+
+    # Keep the paper fixed across reruns until it is labelled or skipped.
+    current_key, skip_key = f"label-current-{queue}", f"label-skipped-{queue}"
+    skipped = st.session_state.setdefault(skip_key, [])
+    paper = st.session_state.get(current_key)
+    if paper is None or paper["paper_id"] in db.get_labels():
+        if queue == "maybe":
+            paper = db.next_unlabelled_maybe(skip=skipped)
+        else:
+            paper = db.next_test_candidate(skip=skipped)
+        st.session_state[current_key] = paper
+    if paper is None:
+        st.success("Nothing left to label here.")
+        if skipped and st.button("Show skipped papers again"):
+            skipped.clear()
+            st.rerun()
+        return
+
+    with st.container(border=True):
+        st.subheader(paper["title"])
+        st.caption(f"{paper['paper_id']}  |  first version {paper['published_date']}")
+        st.markdown(paper["abstract"])
+        if queue == "maybe":
+            st.caption(f"Jev's relevance probability: {paper['relevance']:.2f}")
+        st.caption(f"Question: {relevance_stage(profile).instructions}")
+
+        yes, no, skip, link, _ = st.columns([1, 1, 1, 1, 2])
+        split = "test" if queue == "test" else "train"
+        if yes.button("Relevant", type="primary", key=f"queue-yes-{queue}"):
+            db.set_label(paper["paper_id"], True, split)
+            st.rerun()
+        if no.button("Not relevant", type="primary", key=f"queue-no-{queue}"):
+            db.set_label(paper["paper_id"], False, split)
+            st.rerun()
+        if skip.button("Skip", key=f"queue-skip-{queue}"):
+            skipped.append(paper["paper_id"])
+            st.session_state[current_key] = None
+            st.rerun()
+        link.link_button("Open on arXiv", paper["url"])
+
+    st.caption(
+        "When you have enough labels, run `python -m scanner.cli export-dataset` to write "
+        f"train.jsonl and test.jsonl into {profile.dataset_dir}."
+    )
 
 
 def downloaded_table(papers: pd.DataFrame) -> None:
