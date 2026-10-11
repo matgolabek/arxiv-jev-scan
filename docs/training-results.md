@@ -1,17 +1,27 @@
 # Replacing Jev with a local model: first training run
 
-**Result: a fine-tuned Qwen3.5-0.8B agreed with Jev on all 300 test papers.** It found every
-relevant paper, accepted no irrelevant one and left nothing at "maybe". It runs locally for free and
-is published as a GGUF file for llama.cpp:
-[matgolabek/arxiv-event-cameras-model](https://huggingface.co/matgolabek/arxiv-event-cameras-model).
+**Result: not usable yet.** In Colab, a fine-tuned Qwen3.5-0.8B agreed with Jev on all 300 test
+papers, but that test was flawed (see below). Asked the way a scan asks, the uploaded model
+([matgolabek/arxiv-event-cameras-model](https://huggingface.co/matgolabek/arxiv-event-cameras-model))
+finds none of the relevant papers. Fine-tuned Laya, which the flaw does not affect, found 80%. The
+model has to be retrained with the corrected notebook.
 
-> **This Qwen result is probably too good.** Qwen's Clef head reads all questions of a request
-> together. In this run, relevant papers were trained and tested with two questions (relevance and
-> sub-topic) and irrelevant papers with one, so the model could tell relevance from the number of
-> questions without reading the abstract. A scan asks the relevance question alone. Laya answers
-> each question on its own, so its numbers are not affected. The notebook now trains and tests with
-> one question per request. Until the model is retrained, check it with
-> `python -m scanner.cli evaluate --backend local`, which asks questions the way a scan does.
+> **This Qwen result does not hold: the uploaded model fails in a real scan.** Qwen's Clef head
+> reads all questions of a request together. In this run, relevant papers were trained and tested
+> with two questions (relevance and sub-topic) and irrelevant papers with one, so the model learned
+> to tell relevance from the number of questions instead of from the abstract. A scan asks the
+> relevance question alone, and `python -m scanner.cli evaluate --backend local` (llama.cpp, the
+> Q8_0 GGUF, the same 300 test papers) shows the result:
+>
+> | | Found | Precision | Maybe | Sub-topic matches Jev |
+> |---|---:|---:|---:|---:|
+> | Qwen3.5-0.8B fine-tuned, one question per request | **0%** | - | 0% | 83.3% |
+>
+> Every paper got a relevance probability of about 0.00, so all 150 relevant papers were rejected.
+> The sub-topic answers still match Jev as well as in Colab, so the model file, llama.cpp and the
+> scanner work; only the relevance training was wrong. Laya answers each question on its own, so its
+> numbers below are not affected. The notebook now trains and tests with one question per request;
+> the model has to be retrained with it.
 
 | | |
 |---|---|
@@ -95,10 +105,10 @@ suggestion is capped at 0.5 for reject and 0.1 above it for accept.
 
 ## Next steps
 
-1. Check the published model with `python -m scanner.cli evaluate --backend local` (see the README,
-   "Scanning with the local model").
-2. Re-run the current notebook: it trains with one question per request and measures the
-   false-accept rate on 2,000 unseen rejected papers.
+1. Retrain with the current notebook: it trains and tests with one question per request and
+   measures the false-accept rate on 2,000 unseen rejected papers.
+2. Download the new model and check it with `python -m scanner.cli evaluate --backend local` (see
+   the README, "Scanning with the local model"). Its numbers should now match the notebook's.
 3. Pick the relevance thresholds from `evaluate`'s output (try `--accept` and `--reject`); the
    0.60 / 0.50 above come from this run and may not hold. Then run the local model next to Jev for
    a week or two before switching Jev off.
