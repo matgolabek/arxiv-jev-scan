@@ -16,6 +16,24 @@ still has to be checked with `python -m scanner.cli evaluate --backend local`.
 | Laya, fine-tuned | 84.7% | 100% | 6.0% | 1.0 | 63.3% |
 | **Qwen3.5-0.8B, fine-tuned** | **94.7%** | **100%** | **1.3%** | **0.5** | **82.7%** |
 
+**Checked locally** with `python -m scanner.cli evaluate --backend local` (llama.cpp, `qwen-q8_0.gguf`
+converted with llama.cpp's own converter, CPU):
+
+| Answers from | Papers | Relevant | Found | Precision | Maybe |
+|---|---:|---:|---:|---:|---:|
+| All | 300 | 150 | 94.7% | 100% | 1.0% |
+| Jev | 283 | 133 | **100%** | 100% | 0.4% |
+| Your labels | 17 | 17 | **52.9%** | 100% | 11.8% |
+
+The GGUF matches the notebook, so the conversion kept the model and its calibration. **All 8 missed
+papers are among the 17 you labelled yourself**, papers Jev had left at "maybe": spiking neural
+networks, RGB-event multi-modal trackers without "event" in the title, a spike-camera HDR paper and
+an agent framework. Jev would have shown them to you as "maybe"; the local model rejects 6 of them
+with a probability of about 0.00, so no threshold brings them back. Lowering reject from 0.2 to 0.05
+recovers the other two (found 96.0%, maybe 1.0% to 1.7% of the test set). The model copies Jev's
+clear answers perfectly, but it has learned Jev's boundary from only 22 hand labels and is
+overconfident on the borderline papers.
+
 - Qwen misses 8 of the 150 relevant test papers. At about 8 relevant papers per 1,000 scanned,
   0.5 false accepts means roughly one wrong paper for every 16 right ones.
 - Holdout after calibration: Qwen 97.6% accuracy (ECE 0.016), Laya 95.3% (ECE 0.020).
