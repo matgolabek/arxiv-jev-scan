@@ -69,6 +69,27 @@ def test_local_backend_answers_for_free(llama_server):
     client.close()
 
 
+def test_slow_local_answers_wait_for_the_configured_timeout(llama_server, monkeypatch):
+    import time
+
+    from typesafe_sdk import TypeSafeAPITimeoutError
+
+    original = FakeLlamaServer.do_POST
+
+    def slow_post(self):
+        time.sleep(0.5)
+        original(self)
+
+    monkeypatch.setattr(FakeLlamaServer, "do_POST", slow_post)
+    state = {"title": "Event camera", "abstract": "DVS."}
+
+    assert JevClient(backend="local").ask(RELEVANCE, state).result == {"probability": 0.95}
+
+    monkeypatch.setenv("LOCAL_DECISION_TIMEOUT", "0.1")
+    with pytest.raises(TypeSafeAPITimeoutError):
+        JevClient(backend="local").ask(RELEVANCE, state)
+
+
 def test_backend_comes_from_the_environment(monkeypatch):
     monkeypatch.delenv("DECISION_BACKEND", raising=False)
     assert backend_name() == "jev"

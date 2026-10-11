@@ -13,7 +13,7 @@ from scanner.config import Profile, load_profile
 from scanner.db import Database
 from scanner.exporters.dataset import relevance_stage
 from scanner.exporters.obsidian import export_accepted
-from scanner.jev_client import JevClient, backend_name, local_url
+from scanner.jev_client import DEFAULT_WORKERS, JevClient, backend_name, local_url
 from scanner.pdfs import download_all, download_pdf
 from scanner.pipeline import Pipeline, since_last_run, utc_today
 from scanner.sources import ArxivSource
@@ -102,7 +102,7 @@ def run_scan(profile, db, categories, since, until, max_papers) -> None:
         return
 
     bar = st.progress(0.0, text="Starting scan...")
-    pipeline = Pipeline(profile, db, jev, ArxivSource())
+    pipeline = Pipeline(profile, db, jev, ArxivSource(), workers=DEFAULT_WORKERS[jev.backend])
     try:
         summary = pipeline.scan(
             since, until, categories, max_papers,

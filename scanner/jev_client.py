@@ -33,6 +33,10 @@ DEFAULT_PRICE_PER_MILLION = 0.042
 
 BACKENDS = ("jev", "local")
 DEFAULT_LOCAL_URL = "http://127.0.0.1:8080"
+# A laptop CPU can take several seconds per paper, more while other requests share it.
+DEFAULT_LOCAL_TIMEOUT = 120.0
+# Parallel requests per backend: Jev scales on its side, a local CPU does not.
+DEFAULT_WORKERS = {"jev": 10, "local": 2}
 
 # Errors that will fail for every paper (bad key, invalid stage config),
 # so the scan should stop instead of skipping paper after paper.
@@ -92,7 +96,10 @@ class JevClient:
             url = local_url()
             check_local_server(url)
             # llama.cpp ignores the key, but the SDK requires one.
-            client = TypeSafeClient(api_key="local", base_url=url, retry=RetryPolicy(max_retries=2))
+            timeout = float(os.getenv("LOCAL_DECISION_TIMEOUT") or DEFAULT_LOCAL_TIMEOUT)
+            client = TypeSafeClient(
+                api_key="local", base_url=url, timeout=timeout, retry=RetryPolicy(max_retries=2),
+            )
             price_per_million = 0.0
         if client is None:
             if not os.getenv("TYPESAFE_API_KEY"):

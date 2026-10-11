@@ -15,7 +15,7 @@ from scanner.exporters.dataset import export_dataset, push_dataset, read_labels_
 from scanner.exporters.obsidian import export_accepted
 from scanner.evaluate import evaluate
 from scanner.exporters.dataset import relevance_stage
-from scanner.jev_client import BACKENDS, JevClient, backend_name
+from scanner.jev_client import BACKENDS, DEFAULT_WORKERS, JevClient, backend_name
 from scanner.notify import notify
 from scanner.pdfs import download_all
 from scanner.pipeline import Pipeline, since_last_run
@@ -74,7 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan.add_argument("--until", help="YYYY-MM-DD (default: today)")
     scan.add_argument("--max", type=int, help="stop after this many new papers, handy for a first try")
-    scan.add_argument("--workers", type=int, default=10, help="parallel Jev calls (default: %(default)s)")
+    scan.add_argument(
+        "--workers", type=int, help="parallel requests (default: 10 for Jev, 2 for the local model)",
+    )
     scan.add_argument("--no-notify", action="store_true", help="skip the desktop notification")
     scan.add_argument(
         "--backend", choices=BACKENDS,
@@ -136,7 +138,9 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--backend", choices=BACKENDS, help="default: DECISION_BACKEND from .env, else jev")
     check.add_argument("--accept", type=float, help="accept threshold (default: from the config)")
     check.add_argument("--reject", type=float, help="reject threshold (default: from the config)")
-    check.add_argument("--workers", type=int, default=4, help="parallel requests (default: %(default)s)")
+    check.add_argument(
+        "--workers", type=int, help="parallel requests (default: 10 for Jev, 2 for the local model)",
+    )
     check.set_defaults(command=run_evaluate)
 
     stats = commands.add_parser("stats", parents=[common], help="show totals and recent scans")
@@ -160,7 +164,8 @@ def run_scan(args, profile, db) -> int:
     )
     jev = JevClient(backend=args.backend)
     try:
-        pipeline = Pipeline(profile, db, jev, source, workers=args.workers)
+        workers = args.workers or DEFAULT_WORKERS[jev.backend]
+        pipeline = Pipeline(profile, db, jev, source, workers=workers)
         summary = pipeline.scan(since, until, categories, max_papers=args.max)
     finally:
         jev.close()
@@ -272,7 +277,7 @@ def run_evaluate(args, profile, db) -> int:
     )
     client = JevClient(backend=backend)
     try:
-        report = evaluate(profile, client, path, workers=args.workers)
+        report = evaluate(profile, client, path, workers=args.workers or DEFAULT_WORKERS[backend])
     finally:
         client.close()
 

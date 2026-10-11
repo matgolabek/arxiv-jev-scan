@@ -9,6 +9,7 @@ number of questions instead of from the abstract.
 """
 
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,8 @@ from scanner.config import Profile
 from scanner.exporters.dataset import relevance_stage
 from scanner.jev_client import JevClient
 from scanner.pipeline import decide
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -93,10 +96,12 @@ def evaluate(profile: Profile, client: JevClient, path: Path, workers: int = 4) 
         return prediction, tokens, cost
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for prediction, tokens, cost in pool.map(score_row, rows):
+        for done, (prediction, tokens, cost) in enumerate(pool.map(score_row, rows), start=1):
             report.predictions.append(prediction)
             report.input_tokens += tokens
             report.cost_usd += cost
+            if done % 25 == 0 or done == len(rows):
+                log.info("Scored %d of %d papers", done, len(rows))
     return report
 
 
