@@ -106,6 +106,12 @@ opened).
   never written to `train.jsonl`. The sample is balanced across Jev's accepted, maybe and rejected
   papers, because a plain random sample would hold almost no relevant papers and could not
   measure how many a model misses. Jev's answer is hidden while labelling it.
+- `export-dataset --test-size N` can fill the test set without labelling, by holding out random
+  papers with Jev's answers, half relevant (at most half of all relevant papers). It then
+  measures agreement with Jev rather than correctness, which is enough to decide whether a local
+  model can replace Jev. The held-out ids go into a `test_holdout` table (schema version 3)
+  instead of being re-drawn on each export: a re-draw over a growing set of papers would move
+  some tested papers into training.
 - Labels answer the relevance question only. Later stages take Jev's answers as gold and are
   only asked for relevant papers, because their questions assume an on-topic paper.
 - The export uses the row format of Unsloth's decision-model trainer (`state`, `questions`,

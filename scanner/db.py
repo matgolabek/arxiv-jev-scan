@@ -9,7 +9,7 @@ from pathlib import Path
 
 from scanner.models import Paper, StageResult
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers (
@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS labels (
     relevant    INTEGER NOT NULL,        -- 1 yes, 0 no
     split       TEXT NOT NULL,           -- train | test
     labelled_at TEXT NOT NULL
+);
+
+-- Papers held out for the test set with Jev's answer as gold (export-dataset
+-- --test-size). Stored so a paper, once held out, never moves into training.
+CREATE TABLE IF NOT EXISTS test_holdout (
+    paper_id  TEXT PRIMARY KEY REFERENCES papers(paper_id),
+    chosen_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS papers_by_status ON papers(final_status);
@@ -269,6 +276,16 @@ class Database:
             }
             for row in rows
         ]
+
+    def get_holdout(self) -> set[str]:
+        return {row[0] for row in self.conn.execute("SELECT paper_id FROM test_holdout")}
+
+    def add_to_holdout(self, paper_ids: list[str]) -> None:
+        with self.conn:
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO test_holdout (paper_id, chosen_at) VALUES (?, ?)",
+                [(paper_id, now()) for paper_id in paper_ids],
+            )
 
     def remove_label(self, paper_id: str) -> None:
         with self.conn:

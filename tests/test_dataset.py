@@ -256,3 +256,82 @@ def test_cli_labels_import_defaults_to_the_exported_file_and_explains_a_missing_
 
     assert main(["labels", "export", "--config", str(config)]) == 0
     assert main(["labels", "import", "--config", str(config)]) == 0
+
+
+def test_test_size_holds_out_half_relevant_papers_with_jev_answers(db, profile):
+    for n in range(10):
+        classify(db, f"a{n}", 0.9, "accept")
+    for n in range(30):
+        classify(db, f"r{n}", 0.1, "reject")
+
+    rows, summary = build_rows(db, profile, test_size=8)
+
+    test = [row for row in by_id(rows).values() if row["split"] == "test"]
+    assert summary.rows == {"train": 32, "test": 8}
+    assert summary.relevant["test"] == 4
+    assert summary.test_sources == {"jev": 4 + 4}
+    assert all(row["label_source"] == "jev" for row in test)
+    assert "_relevant" not in rows[0]
+
+
+def test_held_out_papers_stay_in_the_test_set(db, profile):
+    for n in range(10):
+        classify(db, f"a{n}", 0.9, "accept")
+        classify(db, f"r{n}", 0.1, "reject")
+    first = {row["id"] for row in build_rows(db, profile, test_size=4)[0] if row["split"] == "test"}
+
+    # New papers arrive, you label a held-out paper, and the next export has no --test-size.
+    for n in range(10, 20):
+        classify(db, f"a{n}", 0.9, "accept")
+    db.set_label(sorted(first)[0], True)
+    second = {row["id"] for row in build_rows(db, profile)[0] if row["split"] == "test"}
+
+    assert second == first
+
+
+def test_human_test_labels_count_towards_the_test_size(db, profile):
+    for n in range(10):
+        classify(db, f"a{n}", 0.9, "accept")
+        classify(db, f"r{n}", 0.1, "reject")
+    db.set_label("a0", True, "test")
+    db.set_label("r0", False, "test")
+
+    _, summary = build_rows(db, profile, test_size=4)
+
+    assert summary.rows["test"] == 4
+    assert summary.test_sources == {"human": 2, "jev": 2}
+
+
+def test_at_most_half_of_the_relevant_papers_are_held_out(db, profile):
+    for n in range(4):
+        classify(db, f"a{n}", 0.9, "accept")
+    for n in range(100):
+        classify(db, f"r{n}", 0.1, "reject")
+
+    _, summary = build_rows(db, profile, test_size=50)
+
+    assert summary.relevant == {"train": 2, "test": 2}
+    assert summary.rows["test"] == 2 + 25
+
+
+def test_cli_push_reads_the_repository_from_the_environment(tmp_path, monkeypatch, caplog):
+    import scanner.cli
+
+    config = tmp_path / "profile.yaml"
+    config.write_text(
+        f"topic: Test\ndata_dir: {tmp_path / 'data'}\nsource:\n  categories: [cs.CV]\n"
+        "stages:\n  - name: relevance\n    type: noul\n    instructions: Relevant?\n"
+    )
+    pushed = []
+    monkeypatch.setattr(scanner.cli, "push_dataset", lambda out, repo, public: pushed.append(repo) or repo)
+    monkeypatch.setattr(scanner.cli, "load_dotenv", lambda: None)
+
+    monkeypatch.delenv("HF_DATASET_REPO", raising=False)
+    assert main(["export-dataset", "--push", "--config", str(config)]) == 1
+    assert "HF_DATASET_REPO" in caplog.text
+
+    monkeypatch.setenv("HF_DATASET_REPO", "me/from-env")
+    assert main(["export-dataset", "--push", "--config", str(config)]) == 0
+    assert main(["export-dataset", "--push", "me/explicit", "--config", str(config)]) == 0
+    assert main(["export-dataset", "--config", str(config)]) == 0
+    assert pushed == ["me/from-env", "me/explicit"]
