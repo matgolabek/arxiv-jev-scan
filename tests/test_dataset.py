@@ -312,3 +312,26 @@ def test_at_most_half_of_the_relevant_papers_are_held_out(db, profile):
 
     assert summary.relevant == {"train": 2, "test": 2}
     assert summary.rows["test"] == 2 + 25
+
+
+def test_cli_push_reads_the_repository_from_the_environment(tmp_path, monkeypatch, caplog):
+    import scanner.cli
+
+    config = tmp_path / "profile.yaml"
+    config.write_text(
+        f"topic: Test\ndata_dir: {tmp_path / 'data'}\nsource:\n  categories: [cs.CV]\n"
+        "stages:\n  - name: relevance\n    type: noul\n    instructions: Relevant?\n"
+    )
+    pushed = []
+    monkeypatch.setattr(scanner.cli, "push_dataset", lambda out, repo, public: pushed.append(repo) or repo)
+    monkeypatch.setattr(scanner.cli, "load_dotenv", lambda: None)
+
+    monkeypatch.delenv("HF_DATASET_REPO", raising=False)
+    assert main(["export-dataset", "--push", "--config", str(config)]) == 1
+    assert "HF_DATASET_REPO" in caplog.text
+
+    monkeypatch.setenv("HF_DATASET_REPO", "me/from-env")
+    assert main(["export-dataset", "--push", "--config", str(config)]) == 0
+    assert main(["export-dataset", "--push", "me/explicit", "--config", str(config)]) == 0
+    assert main(["export-dataset", "--config", str(config)]) == 0
+    assert pushed == ["me/from-env", "me/explicit"]

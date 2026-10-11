@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -93,8 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="hold out random papers (half relevant) with Jev's answers until the test set has N",
     )
     dataset.add_argument(
-        "--push", metavar="USER/REPO",
-        help="also upload it to this Hugging Face dataset repository (log in first: hf auth login)",
+        "--push", nargs="?", const="", metavar="USER/REPO",
+        help="also upload it to a Hugging Face dataset repository: this one, or HF_DATASET_REPO "
+             "from .env (log in first: hf auth login)",
     )
     dataset.add_argument(
         "--public", action="store_true", help="create the repository as public (default: private)",
@@ -193,8 +195,11 @@ def run_export_dataset(args, profile, db) -> int:
         )
     log.info("Wrote %s", out_dir)
 
-    if args.push:
-        url = push_dataset(out_dir, args.push, public=args.public)
+    if args.push is not None:
+        repo = args.push or os.getenv("HF_DATASET_REPO")
+        if not repo:
+            raise RuntimeError("--push needs a repository: set HF_DATASET_REPO in .env, or use --push USER/REPO")
+        url = push_dataset(out_dir, repo, public=args.public)
         log.info("Pushed to %s", url)
     return 0
 

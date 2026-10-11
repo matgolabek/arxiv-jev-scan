@@ -215,18 +215,36 @@ training. Before publishing a model trained on Jev's answers, check TypeSafe's t
 Keep the dataset out of git: every export rewrites the files, so each one would stay in the
 history forever, and two branches with different exports can't be merged. A Hugging Face dataset
 repository versions every upload and loads straight into Colab. Log in once
-(`hf auth login`, with a token that can write), then export and upload in one go:
+(`hf auth login`, with a token that can write), put the repository name in `.env`:
+
+```
+HF_DATASET_REPO=your-name/arxiv-event-cameras
+HF_MODEL_REPO=your-name/arxiv-event-cameras-model
+```
+
+then export and upload in one go:
 
 ```bash
-python -m scanner.cli export-dataset --push your-name/arxiv-event-cameras
+python -m scanner.cli export-dataset --test-size 300 --push
 ```
 
-The repository is created as private unless you add `--public`. In Colab:
+`--push your-name/other-repo` uploads somewhere else instead. The repository is created as private
+unless you add `--public`.
 
-```python
-from datasets import load_dataset
-dataset = load_dataset("your-name/arxiv-event-cameras")   # splits: train, test
-```
+#### Training a local model in Colab
+
+[`notebooks/train_decision_model.ipynb`](notebooks/train_decision_model.ipynb) runs on a free Colab
+T4 GPU. Open it in Colab (File > Open notebook > GitHub, or upload it), choose a T4 runtime, and drag
+your `.env` into the Files pane, or add `HF_DATASET_REPO`, `HF_MODEL_REPO` and `HF_TOKEN` as Colab
+secrets. It:
+
+1. loads the dataset from `HF_DATASET_REPO` and builds a balanced training set: every relevant
+   paper plus ten rejected ones each, half of them the rejected papers Jev found most borderline
+2. scores zero-shot Laya on the test set
+3. fine-tunes Laya and Qwen3.5-0.8B with [Unsloth](https://unsloth.ai/docs/basics/train-your-own-decision-model-with-unsloth)
+   and scores them: the share of relevant papers found, the precision of accepted papers, the share
+   left at "maybe", and sub-topic accuracy
+4. suggests accept and reject thresholds and uploads the best model as GGUF to `HF_MODEL_REPO`
 
 #### Backing up your labels
 
