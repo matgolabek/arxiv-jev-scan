@@ -13,7 +13,7 @@ from scanner.config import Profile, load_profile
 from scanner.db import Database
 from scanner.exporters.dataset import relevance_stage
 from scanner.exporters.obsidian import export_accepted
-from scanner.jev_client import JevClient
+from scanner.jev_client import JevClient, backend_name, local_url
 from scanner.pdfs import download_all, download_pdf
 from scanner.pipeline import Pipeline, since_last_run, utc_today
 from scanner.sources import ArxivSource
@@ -83,6 +83,12 @@ def scan_controls(profile: Profile, db: Database) -> None:
 
     max_papers = sidebar.number_input("Stop after N new papers (0 = no limit)", min_value=0, value=0, step=10)
 
+    try:
+        backend = backend_name()
+        where = f" at {local_url()}" if backend == "local" else ""
+        sidebar.caption(f"Classifier: **{backend}**{where} (DECISION_BACKEND in .env)")
+    except RuntimeError as error:
+        sidebar.error(str(error))
     if sidebar.button("Run scan", type="primary"):
         run_scan(profile, db, categories, since, until, max_papers or None)
     sidebar.caption("Big backfills are more comfortable from the command line, see the README.")

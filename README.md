@@ -248,6 +248,48 @@ secrets. It:
 
 Results of the first run, for the event camera topic: [docs/training-results.md](docs/training-results.md).
 
+#### Scanning with the local model
+
+The trained model runs in [llama.cpp](https://github.com/ggml-org/llama.cpp)'s server, which
+answers the same requests as Jev at `/v1/systemone`. You need llama.cpp release **b11443 or newer**,
+the first with decision models (`brew install llama.cpp`, `winget install llama.cpp`, or a
+[release build](https://github.com/ggml-org/llama.cpp/releases)). Start it in its own terminal:
+
+```bash
+llama-server -hf your-name/arxiv-event-cameras-model:Q8_0 --no-mmproj \
+    --port 8080 -c 4096 -b 4096 -ub 4096
+```
+
+- `-hf` downloads the model from `HF_MODEL_REPO` once and caches it; `-m path/to/model.gguf` uses a
+  local file instead.
+- `--no-mmproj` skips the image encoder that Qwen3.5 ships with; papers are text only.
+- `-ub 4096`: a decision model reads the whole prompt in one batch, and the default of 512 tokens is
+  too small for a title, an abstract and the question.
+
+Then point the scanner at it in `.env`:
+
+```
+DECISION_BACKEND=local
+LOCAL_DECISION_URL=http://127.0.0.1:8080
+```
+
+Scans, the dashboard and `evaluate` now use the local model, and its cost is recorded as $0. The
+`model` column of each stored answer says which model gave it. `scan --backend jev` or
+`--backend local` overrides `.env` for one run. If the server is not running, the scan stops at once
+with the command to start it.
+
+Before switching, score the model on the test set the way a scan asks its questions:
+
+```bash
+python -m scanner.cli evaluate --backend local
+python -m scanner.cli evaluate --backend local --accept 0.6 --reject 0.5   # try other thresholds
+python -m scanner.cli evaluate --backend jev    # Jev on the same papers, about 300 calls
+```
+
+It prints the share of relevant papers found, the precision of accepted papers, the share left at
+"maybe" and sub-topic accuracy, separately for answers from Jev and from your own labels, and lists
+the relevant papers the model missed and the irrelevant ones it accepted.
+
 #### Backing up your labels
 
 Your labels are the only part of this that costs your time, and they live in `papers.db`. Save

@@ -13,7 +13,9 @@ from scanner.config import load_profile
 from scanner.db import Database
 from scanner.exporters.dataset import export_dataset, push_dataset, read_labels_file, write_labels_file
 from scanner.exporters.obsidian import export_accepted
-from scanner.jev_client import JevClient
+from scanner.evaluate import evaluate
+from scanner.exporters.dataset import relevance_stage
+from scanner.jev_client import BACKENDS, JevClient, backend_name
 from scanner.notify import notify
 from scanner.pdfs import download_all
 from scanner.pipeline import Pipeline, since_last_run
@@ -30,6 +32,10 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)-7s %(message)s",
         datefmt="%H:%M:%S",
     )
+    if not args.verbose:
+        # One line per HTTP request would bury the scan's own progress.
+        for name in ("httpx2", "typesafe_sdk"):
+            logging.getLogger(name).setLevel(logging.WARNING)
 
     profile = load_profile(args.config)
     db = Database(profile.db_path)
@@ -70,6 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--max", type=int, help="stop after this many new papers, handy for a first try")
     scan.add_argument("--workers", type=int, default=10, help="parallel Jev calls (default: %(default)s)")
     scan.add_argument("--no-notify", action="store_true", help="skip the desktop notification")
+    scan.add_argument(
+        "--backend", choices=BACKENDS,
+        help="classify with Jev or the local model (default: DECISION_BACKEND from .env, else jev)",
+    )
     scan.set_defaults(command=run_scan)
 
     download = commands.add_parser(
@@ -118,6 +128,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     labels_import.set_defaults(command=run_labels_import)
 
+    check = commands.add_parser(
+        "evaluate", parents=[common],
+        help="score Jev or the local model on the test set, asking questions the way a scan does",
+    )
+    check.add_argument("--file", help="dataset file to score (default: <data_dir>/dataset/test.jsonl)")
+    check.add_argument("--backend", choices=BACKENDS, help="default: DECISION_BACKEND from .env, else jev")
+    check.add_argument("--accept", type=float, help="accept threshold (default: from the config)")
+    check.add_argument("--reject", type=float, help="reject threshold (default: from the config)")
+    check.add_argument("--workers", type=int, default=4, help="parallel requests (default: %(default)s)")
+    check.set_defaults(command=run_evaluate)
+
     stats = commands.add_parser("stats", parents=[common], help="show totals and recent scans")
     stats.set_defaults(command=run_stats)
 
@@ -133,8 +154,11 @@ def run_scan(args, profile, db) -> int:
         since = date.fromisoformat(args.since)
     until = date.fromisoformat(args.until) if args.until else None
 
-    log.info("Scanning %s for '%s' since %s", ", ".join(categories), profile.topic, since)
-    jev = JevClient()
+    log.info(
+        "Scanning %s for '%s' since %s with %s",
+        ", ".join(categories), profile.topic, since, backend_name(args.backend),
+    )
+    jev = JevClient(backend=args.backend)
     try:
         pipeline = Pipeline(profile, db, jev, source, workers=args.workers)
         summary = pipeline.scan(since, until, categories, max_papers=args.max)
@@ -228,6 +252,47 @@ def run_labels_import(args, profile, db) -> int:
     waiting = len(db.get_labels()) - len(known)
     if waiting:
         log.info("%d labels are for papers not scanned yet; they apply once you scan them.", waiting)
+    return 0
+
+
+def run_evaluate(args, profile, db) -> int:
+    path = Path(args.file or profile.dataset_dir / "test.jsonl")
+    if not path.is_file():
+        raise RuntimeError(f"No dataset file at {path}. Run 'export-dataset --test-size 300' first.")
+    stage = relevance_stage(profile)
+    if args.accept is not None:
+        stage.accept_threshold = args.accept
+    if args.reject is not None:
+        stage.reject_threshold = args.reject
+
+    backend = backend_name(args.backend)
+    log.info(
+        "Scoring %s on %s (accept >= %.2f, reject <= %.2f)",
+        backend, path, stage.accept_threshold, stage.reject_threshold,
+    )
+    client = JevClient(backend=backend)
+    try:
+        report = evaluate(profile, client, path, workers=args.workers)
+    finally:
+        client.close()
+
+    def percent(value):
+        return "  -   " if value is None else f"{value:6.1%}"
+
+    print(f"\n{'answers from':<14}{'papers':>7}{'relevant':>9}  {'found':>6}  {'precision':>9}  {'maybe':>6}  {'sub-topics':>10}")
+    for source, name in ((None, "all"), ("jev", "Jev"), ("human", "your labels")):
+        scores = report.scores(source)
+        if scores["papers"]:
+            print(
+                f"{name:<14}{scores['papers']:>7}{scores['relevant']:>9}  {percent(scores['found'])}  "
+                f"{percent(scores['precision']):>9}  {percent(scores['maybe'])}  {percent(scores['sub_topics']):>10}"
+            )
+    for title, papers in (("Missed relevant papers", report.missed()), ("Wrongly accepted", report.false_accepts())):
+        if papers:
+            print(f"\n{title} ({len(papers)}):")
+            for paper in papers[:10]:
+                print(f"  {paper.probability:.2f}  {paper.paper_id}  {paper.title[:80]}")
+    print(f"\n{report.input_tokens:,} input tokens, cost ${report.cost_usd:.4f}")
     return 0
 
 

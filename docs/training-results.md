@@ -5,6 +5,14 @@ relevant paper, accepted no irrelevant one and left nothing at "maybe". It runs 
 is published as a GGUF file for llama.cpp:
 [matgolabek/arxiv-event-cameras-model](https://huggingface.co/matgolabek/arxiv-event-cameras-model).
 
+> **This Qwen result is probably too good.** Qwen's Clef head reads all questions of a request
+> together. In this run, relevant papers were trained and tested with two questions (relevance and
+> sub-topic) and irrelevant papers with one, so the model could tell relevance from the number of
+> questions without reading the abstract. A scan asks the relevance question alone. Laya answers
+> each question on its own, so its numbers are not affected. The notebook now trains and tests with
+> one question per request. Until the model is retrained, check it with
+> `python -m scanner.cli evaluate --backend local`, which asks questions the way a scan does.
+
 | | |
 |---|---|
 | Topic | Event cameras (`config/stages.yaml`) |
@@ -87,10 +95,10 @@ suggestion is capped at 0.5 for reject and 0.1 above it for accept.
 
 ## Next steps
 
-1. Re-run the current notebook to get the false-accept rate on unseen rejected papers.
-2. Add a local backend to the scanner: llama.cpp's decision server (`/v1/systemone`) serving this
-   GGUF, selected in `.env`, with $0 cost.
-3. Add an `evaluate` command that runs any backend on `test.jsonl`.
-4. Use `accept_threshold: 0.60` and `reject_threshold: 0.50` for the relevance stage when the
-   scanner runs on the local model, and run it next to Jev for a week or two before switching off
-   Jev.
+1. Check the published model with `python -m scanner.cli evaluate --backend local` (see the README,
+   "Scanning with the local model").
+2. Re-run the current notebook: it trains with one question per request and measures the
+   false-accept rate on 2,000 unseen rejected papers.
+3. Pick the relevance thresholds from `evaluate`'s output (try `--accept` and `--reject`); the
+   0.60 / 0.50 above come from this run and may not hold. Then run the local model next to Jev for
+   a week or two before switching Jev off.
