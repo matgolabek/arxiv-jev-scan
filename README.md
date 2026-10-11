@@ -246,6 +246,8 @@ secrets. It:
    left at "maybe", and sub-topic accuracy
 4. suggests accept and reject thresholds and uploads the best model as GGUF to `HF_MODEL_REPO`
 
+Results of the first run, for the event camera topic: [docs/training-results.md](docs/training-results.md).
+
 #### Backing up your labels
 
 Your labels are the only part of this that costs your time, and they live in `papers.db`. Save
