@@ -89,6 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dataset.add_argument("--out", help="output folder (default: <data_dir>/dataset)")
     dataset.add_argument(
+        "--test-size", type=int, metavar="N",
+        help="hold out random papers (half relevant) with Jev's answers until the test set has N",
+    )
+    dataset.add_argument(
         "--push", metavar="USER/REPO",
         help="also upload it to this Hugging Face dataset repository (log in first: hf auth login)",
     )
@@ -168,7 +172,7 @@ def run_export(args, profile, db) -> int:
 
 def run_export_dataset(args, profile, db) -> int:
     out_dir = args.out or profile.dataset_dir
-    summary = export_dataset(db, profile, out_dir)
+    summary = export_dataset(db, profile, out_dir, test_size=args.test_size)
     for split in ("train", "test"):
         log.info(
             "%s.jsonl: %d papers, %d relevant", split, summary.rows[split], summary.relevant[split]
@@ -177,8 +181,16 @@ def run_export_dataset(args, profile, db) -> int:
         "Gold relevance from your labels: %d, from Jev: %d. Skipped %d unlabelled maybe papers.",
         summary.label_sources["human"], summary.label_sources["jev"], summary.skipped_maybe,
     )
-    if summary.rows["test"] == 0:
-        log.warning("The test set is empty. Label papers in the dashboard's Label tab (test sample).")
+    if summary.rows["test"]:
+        log.info(
+            "Test answers from your labels: %d, from Jev: %d",
+            summary.test_sources["human"], summary.test_sources["jev"],
+        )
+    else:
+        log.warning(
+            "The test set is empty. Add --test-size 300, or label papers in the dashboard's "
+            "Label tab (test sample)."
+        )
     log.info("Wrote %s", out_dir)
 
     if args.push:

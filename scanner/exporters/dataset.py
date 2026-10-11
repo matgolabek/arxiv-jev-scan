@@ -14,8 +14,11 @@ Where the gold answers come from:
   full probabilities as soft labels; yes/no stages that ended at "maybe" are
   left out.
 
-Papers you labelled from the test sample go to test.jsonl, everything else to
-train.jsonl. Never train on the test file: it is what tells you how a model
+test.jsonl holds the papers you labelled from the test sample, plus, with
+`test_size`, a random sample held out with Jev's answers (half relevant, half
+not). Held-out papers are remembered in the database, so later exports keep
+them in the test set even after new papers are scanned. Everything else goes
+to train.jsonl. Never train on the test file: it is what tells you how a model
 compares with Jev.
 
 The folder also gets labels.jsonl (a backup of your labels, see
@@ -24,6 +27,7 @@ Hugging Face dataset repository as is and loaded with `load_dataset`.
 """
 
 import json
+import random
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +42,7 @@ class DatasetSummary:
     rows: dict[str, int] = field(default_factory=lambda: {"train": 0, "test": 0})
     relevant: dict[str, int] = field(default_factory=lambda: {"train": 0, "test": 0})
     label_sources: Counter = field(default_factory=Counter)  # human / jev
+    test_sources: Counter = field(default_factory=Counter)   # human / jev, test rows only
     questions: Counter = field(default_factory=Counter)      # stage name -> rows that ask it
     skipped_maybe: int = 0                                   # unlabelled "maybe" papers
 
@@ -50,10 +55,18 @@ def relevance_stage(profile: Profile) -> Stage:
     raise RuntimeError("The config has no yes/no (noul) stage, so there is no relevance question to train.")
 
 
-def build_rows(db: Database, profile: Profile) -> tuple[list[dict], DatasetSummary]:
+def build_rows(
+    db: Database, profile: Profile, test_size: int | None = None,
+) -> tuple[list[dict], DatasetSummary]:
+    """Dataset rows, one per paper with a known relevance answer.
+
+    With `test_size`, tops the test set up to that many papers (half relevant)
+    by holding out random training papers, and records them in the database.
+    """
     relevance = relevance_stage(profile)
     later_stages = [stage for stage in profile.stages if stage is not relevance]
     labels = db.get_labels()
+    holdout = db.get_holdout()
     all_results = db.get_all_stage_results()
     summary = DatasetSummary()
     rows = []
@@ -79,6 +92,8 @@ def build_rows(db: Database, profile: Profile) -> tuple[list[dict], DatasetSumma
                     questions[stage.name] = stage.question()
                     gold[stage.name] = answer
 
+        if split == "train" and paper["paper_id"] in holdout:
+            split = "test"
         rows.append({
             "id": paper["paper_id"],
             "split": split,
@@ -89,12 +104,41 @@ def build_rows(db: Database, profile: Profile) -> tuple[list[dict], DatasetSumma
             "gold": json.dumps(gold, ensure_ascii=False),
             # Jev's raw answers, for comparing models later. Not used as gold.
             "jev": json.dumps({name: result["result"] for name, result in results.items()}),
+            "_relevant": relevant,
         })
+
+    if test_size:
+        db.add_to_holdout(hold_out(rows, test_size))
+
+    for row in rows:
+        split, relevant = row["split"], row.pop("_relevant")
         summary.rows[split] += 1
         summary.relevant[split] += relevant
-        summary.label_sources[source] += 1
-        summary.questions.update(questions.keys())
+        summary.label_sources[row["label_source"]] += 1
+        if split == "test":
+            summary.test_sources[row["label_source"]] += 1
+        summary.questions.update(json.loads(row["questions"]).keys())
     return rows, summary
+
+
+def hold_out(rows: list[dict], test_size: int) -> list[str]:
+    """Move random training rows to the test split until it holds `test_size`
+    papers, half of them relevant. Returns the ids that were moved.
+
+    At most half of all relevant papers go to the test set, so training keeps
+    enough of them.
+    """
+    targets = {True: test_size // 2, False: test_size - test_size // 2}
+    targets[True] = min(targets[True], sum(row["_relevant"] for row in rows) // 2)
+    rng = random.Random(0)
+    moved = []
+    for relevant, target in targets.items():
+        have = sum(1 for row in rows if row["split"] == "test" and row["_relevant"] == relevant)
+        candidates = [row for row in rows if row["split"] == "train" and row["_relevant"] == relevant]
+        for row in rng.sample(candidates, max(0, min(target - have, len(candidates)))):
+            row["split"] = "test"
+            moved.append(row["id"])
+    return moved
 
 
 def stage_gold(stage: Stage, result: dict | None) -> bool | dict | None:
@@ -109,12 +153,14 @@ def stage_gold(stage: Stage, result: dict | None) -> bool | dict | None:
     return {"type": "choice", "label": answer["selected"], "probabilities": answer["probabilities"]}
 
 
-def export_dataset(db: Database, profile: Profile, out_dir: Path | None = None) -> DatasetSummary:
+def export_dataset(
+    db: Database, profile: Profile, out_dir: Path | None = None, test_size: int | None = None,
+) -> DatasetSummary:
     """Write train.jsonl, test.jsonl, manifest.json, labels.jsonl and README.md.
     Returns what was written."""
     out_dir = Path(out_dir or profile.dataset_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    rows, summary = build_rows(db, profile)
+    rows, summary = build_rows(db, profile, test_size)
 
     for split in ("train", "test"):
         with (out_dir / f"{split}.jsonl").open("w", encoding="utf-8") as file:
@@ -136,6 +182,7 @@ def export_dataset(db: Database, profile: Profile, out_dir: Path | None = None) 
             for split in ("train", "test")
         },
         "label_sources": dict(summary.label_sources),
+        "test_label_sources": dict(summary.test_sources),
         "questions": dict(summary.questions),
         "skipped_unlabelled_maybe": summary.skipped_maybe,
     }
@@ -161,7 +208,7 @@ def dataset_card(profile: Profile, summary: DatasetSummary) -> str:
 Made with [arxiv-jev-scan](https://github.com/matgolabek/arxiv-jev-scan) (`export-dataset`).
 Rows follow the format of Unsloth's decision-model trainer: `state` (title and abstract),
 `questions` and `gold`, each a JSON string. Gold relevance is a human label where there is one,
-otherwise Jev's decision. `test` holds only human-labelled papers and must not be trained on.
+otherwise Jev's decision (see `label_source`). `test` is held out and must not be trained on.
 
 | split | papers | relevant |
 |---|---|---|

@@ -177,13 +177,24 @@ example when you spot a mistake. The "You" column shows your labels.
 Then export the dataset:
 
 ```bash
-python -m scanner.cli export-dataset          # writes data/dataset/
+python -m scanner.cli export-dataset --test-size 300    # writes data/dataset/
 ```
+
+`--test-size 300` holds out random papers, half relevant and half not, with Jev's answers as
+gold, until the test set has 300 papers. Papers you labelled from the test sample count towards
+the 300. At most half of the relevant papers are held out, so training keeps enough of them. The
+held-out papers are remembered in the database, so later exports keep them in the test set even
+without the option and after new scans; a paper that was tested on never moves into training.
+
+A test set with Jev's answers measures how closely a model copies Jev, and Jev itself scores 100%
+on it. That is enough to decide whether a local model can replace Jev. To also measure how often
+Jev and the model are actually right, label papers from the test sample yourself; each test row's
+`label_source` says where its answer came from.
 
 ```
 data/dataset/
-  train.jsonl      every paper with a known answer, except the test sample
-  test.jsonl       the papers you labelled from the test sample
+  train.jsonl      every paper with a known answer, except the test set
+  test.jsonl       held-out papers and the papers you labelled from the test sample
   manifest.json    row counts, relevant vs not, where the labels came from
   labels.jsonl     a backup of your labels (see below)
   README.md        dataset card for the Hugging Face Hub
