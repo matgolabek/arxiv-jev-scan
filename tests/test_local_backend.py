@@ -136,6 +136,10 @@ def test_evaluate_asks_relevance_alone_like_a_scan(llama_server, db, profile, tm
     assert scores["sub_topics"] == 1.0
     assert [p.paper_id for p in report.false_accepts()] == ["4"]
     assert report.cost_usd == 0.0
+    # Probabilities: three papers at 0.95 (two relevant), one irrelevant at 0.03.
+    assert report.at_thresholds(accept=0.99, reject=0.5) == {"found": 1.0, "precision": None, "maybe": 0.75}
+    assert report.at_thresholds(accept=0.9, reject=0.02) == {"found": 1.0, "precision": 2 / 3, "maybe": 0.25}
+    assert report.at_thresholds(accept=0.9, reject=0.96)["found"] == 0.0
 
 
 def test_cli_evaluate_prints_a_table(llama_server, tmp_path, capsys):

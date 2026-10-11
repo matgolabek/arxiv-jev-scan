@@ -53,6 +53,18 @@ class Report:
             "sub_topics": _share(sum(hits), len(hits)),
         }
 
+    def at_thresholds(self, accept: float, reject: float) -> dict:
+        """Found, precision and maybe share if the relevance thresholds were different,
+        from the probabilities already collected (no new requests)."""
+        relevant = [p for p in self.predictions if p.relevant]
+        accepted = [p for p in self.predictions if p.probability >= accept]
+        maybe = [p for p in self.predictions if reject < p.probability < accept]
+        return {
+            "found": _share(sum(p.probability > reject for p in relevant), len(relevant)),
+            "precision": _share(sum(p.relevant for p in accepted), len(accepted)),
+            "maybe": _share(len(maybe), len(self.predictions)),
+        }
+
     def missed(self) -> list[Prediction]:
         return [p for p in self.predictions if p.relevant and p.decision == "reject"]
 

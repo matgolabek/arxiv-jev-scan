@@ -1,10 +1,34 @@
-# Replacing Jev with a local model: first training run
+# Replacing Jev with a local model: training runs
 
-**Result: not usable yet.** In Colab, a fine-tuned Qwen3.5-0.8B agreed with Jev on all 300 test
-papers, but that test was flawed (see below). Asked the way a scan asks, the uploaded model
-([matgolabek/arxiv-event-cameras-model](https://huggingface.co/matgolabek/arxiv-event-cameras-model))
-finds none of the relevant papers. Fine-tuned Laya, which the flaw does not affect, found 80%. The
-model has to be retrained with the corrected notebook.
+## Second run: one question per request
+
+**Result: fine-tuned Qwen3.5-0.8B finds 94.7% of the relevant papers with no wrong accepts on the
+test set, and about 0.5 wrong accepts per 1,000 scanned papers.** This run trained and tested with
+one question per request, the way a scan asks (see the first run for why that matters). The GGUF
+still has to be checked with `python -m scanner.cli evaluate --backend local`.
+
+300 test papers (150 relevant), thresholds accept 0.8 / reject 0.2. False accepts are measured on
+2,000 rejected papers no model trained on, scaled to your real mix of papers (over 99% irrelevant).
+
+| Model | Relevant found | Precision of accepts | Left at "maybe" | False accepts per 1,000 scanned | Sub-topic matches Jev |
+|---|---:|---:|---:|---:|---:|
+| Laya, zero-shot | 100% | 70.4% | 46.0% | 294 | 19.3% |
+| Laya, fine-tuned | 84.7% | 100% | 6.0% | 1.0 | 63.3% |
+| **Qwen3.5-0.8B, fine-tuned** | **94.7%** | **100%** | **1.3%** | **0.5** | **82.7%** |
+
+- Qwen misses 8 of the 150 relevant test papers. At about 8 relevant papers per 1,000 scanned,
+  0.5 false accepts means roughly one wrong paper for every 16 right ones.
+- Holdout after calibration: Qwen 97.6% accuracy (ECE 0.016), Laya 95.3% (ECE 0.020).
+- The notebook of this run suggested thresholds of accept 0.27 / reject 0.17. Ignore them: the
+  suggestion picked the lowest accept value that kept precision at 90% and moved reject to gain a
+  single paper. Qwen's probabilities sit almost all near 0 or 1, so the thresholds in between barely
+  matter. The notebook and `evaluate` now print a table of thresholds instead. Since a missed paper
+  costs more than one more "maybe" to review, keep accept at 0.8 and lower reject below 0.2.
+- Unsloth's GGUF export failed in this session (`No module named 'gguf.scripts'`), so the model was
+  converted with llama.cpp's own converter, and the upload skipped the new file. The notebook now
+  falls back to the converter of llama.cpp b11443 by itself and uploads the file as `qwen-q8_0.gguf`.
+
+## First run: two questions for relevant papers
 
 > **This Qwen result does not hold: the uploaded model fails in a real scan.** Qwen's Clef head
 > reads all questions of a request together. In this run, relevant papers were trained and tested
@@ -105,10 +129,11 @@ suggestion is capped at 0.5 for reject and 0.1 above it for accept.
 
 ## Next steps
 
-1. Retrain with the current notebook: it trains and tests with one question per request and
-   measures the false-accept rate on 2,000 unseen rejected papers.
-2. Download the new model and check it with `python -m scanner.cli evaluate --backend local` (see
-   the README, "Scanning with the local model"). Its numbers should now match the notebook's.
-3. Pick the relevance thresholds from `evaluate`'s output (try `--accept` and `--reject`); the
-   0.60 / 0.50 above come from this run and may not hold. Then run the local model next to Jev for
-   a week or two before switching Jev off.
+1. Make sure `qwen-q8_0.gguf` from the second run is in
+   [the model repository](https://huggingface.co/matgolabek/arxiv-event-cameras-model); upload it
+   from Colab if the upload was skipped.
+2. Download it and check it with `python -m scanner.cli evaluate --backend local` (README, "Scanning
+   with the local model"). Its numbers should match the second run's. If they are far off, the
+   fallback conversion probably lost the calibration or the decision head.
+3. Pick the thresholds from `evaluate`'s threshold table, then run the local model next to Jev for a
+   week or two before switching Jev off.

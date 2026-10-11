@@ -292,6 +292,17 @@ def run_evaluate(args, profile, db) -> int:
                 f"{name:<14}{scores['papers']:>7}{scores['relevant']:>9}  {percent(scores['found'])}  "
                 f"{percent(scores['precision']):>9}  {percent(scores['maybe'])}  {percent(scores['sub_topics']):>10}"
             )
+    print(f"\nOther thresholds (from the same answers):\n  {'reject <=':>9}  {'found':>6}  {'maybe':>6}    "
+          f"{'accept >=':>9}  {'precision':>9}  {'maybe':>6}")
+    rejects, accepts = (0.5, 0.2, 0.1, 0.05, 0.02, 0.01), (0.5, 0.7, 0.8, 0.9, 0.95)
+    for reject, accept in zip(rejects, accepts + (None,)):
+        low = report.at_thresholds(stage.accept_threshold, reject)
+        line = f"  {reject:9.2f}  {percent(low['found'])}  {percent(low['maybe'])}    "
+        if accept is not None:
+            high = report.at_thresholds(accept, stage.reject_threshold)
+            line += f"{accept:9.2f}  {percent(high['precision']):>9}  {percent(high['maybe'])}"
+        print(line.rstrip())
+    print(f"  (left: accept stays at {stage.accept_threshold:.2f}; right: reject stays at {stage.reject_threshold:.2f})")
     for title, papers in (("Missed relevant papers", report.missed()), ("Wrongly accepted", report.false_accepts())):
         if papers:
             print(f"\n{title} ({len(papers)}):")

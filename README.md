@@ -256,15 +256,16 @@ the first with decision models (`brew install llama.cpp`, `winget install llama.
 [release build](https://github.com/ggml-org/llama.cpp/releases)). Start it in its own terminal:
 
 ```bash
-llama-server -hf your-name/arxiv-event-cameras-model:Q8_0 --no-mmproj \
-    --port 8080 -c 4096 -b 4096 -ub 4096
+hf download your-name/arxiv-event-cameras-model qwen-q8_0.gguf --local-dir models/event-cameras
+llama-server -m models/event-cameras/qwen-q8_0.gguf --port 8080 -c 4096 -b 4096 -ub 4096
 ```
 
-- `-hf` downloads the model from `HF_MODEL_REPO` once and caches it; `-m path/to/model.gguf` uses a
-  local file instead.
-- `--no-mmproj` skips the image encoder that Qwen3.5 ships with; papers are text only.
+- The notebook uploads the model as `<model>-q8_0.gguf`, for example `qwen-q8_0.gguf`. `models/` is
+  in `.gitignore`.
 - `-ub 4096`: a decision model reads the whole prompt in one batch, and the default of 512 tokens is
   too small for a title, an abstract and the question.
+- On a CPU, a paper takes about a second. With an NVIDIA GPU, use a CUDA build of llama.cpp, add
+  `-ngl 99 -np 8 -c 32768` to the server and `--workers 8` to `scan` and `evaluate`.
 
 Then point the scanner at it in `.env`:
 
@@ -287,8 +288,10 @@ python -m scanner.cli evaluate --backend jev    # Jev on the same papers, about 
 ```
 
 It prints the share of relevant papers found, the precision of accepted papers, the share left at
-"maybe" and sub-topic accuracy, separately for answers from Jev and from your own labels, and lists
-the relevant papers the model missed and the irrelevant ones it accepted.
+"maybe" and sub-topic accuracy, separately for answers from Jev and from your own labels. A second
+table shows the same numbers at other accept and reject thresholds, computed from the same answers,
+so you can choose thresholds without asking the model again. Last, it lists the relevant papers the
+model missed and the irrelevant ones it accepted.
 
 #### Backing up your labels
 
