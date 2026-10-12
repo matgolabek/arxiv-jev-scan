@@ -1,0 +1,114 @@
+# Scan profile: adaptive sensor data fusion on SoC FPGA platforms for robust
+# UAV swarm navigation.
+#
+# The topic is the overlap of three areas, and few papers cover all three:
+#
+#   A. multi-sensor data fusion or state estimation
+#   B. navigation of UAVs, drones or UAV swarms
+#   C. FPGA, SoC FPGA or other embedded hardware acceleration
+#
+# So the relevance question accepts papers that cover at least two of them,
+# and the later stages tag which ones a paper covers, so you can filter for
+# the rare papers that cover all three.
+#
+# Run with `--config config/uav-fpga-fusion.yaml`, or pick this profile in the
+# dashboard. It has its own data folder, so the event camera papers stay apart.
+
+topic: Adaptive sensor fusion on SoC FPGAs for UAV swarm navigation
+
+data_dir: data/uav-fpga-fusion
+
+source:
+  # Robotics, hardware architecture, systems and control, signal processing
+  # and multi-agent systems. cs.CV is left out on purpose: it is large, and
+  # the drone and visual-inertial papers that matter are usually cross-listed
+  # in cs.RO. Add it if you find relevant papers missing.
+  categories: [cs.RO, cs.AR, eess.SY, eess.SP, cs.MA]
+
+stages:
+  - name: relevance
+    type: noul
+    instructions: >-
+      Does this paper address at least two of these three areas:
+      (A) fusing data from several sensors, or estimating a vehicle's state
+      or position from several sensors;
+      (B) navigation, localization or control of UAVs, drones or UAV swarms;
+      (C) implementing perception, estimation or navigation on FPGA, SoC FPGA
+      or other embedded hardware accelerators?
+    criteria:
+      true: >-
+        The paper covers at least two of the areas. Examples: GNSS/IMU/vision
+        fusion for drone navigation; cooperative localization in a UAV swarm
+        from UWB ranging and onboard sensors; an FPGA or Zynq/MPSoC
+        accelerator for a Kalman filter, visual odometry or SLAM; sensor
+        fusion running on embedded hardware aboard a drone.
+      false: >-
+        The paper covers at most one area. Examples: sensor fusion for cars,
+        ground robots or wearables with no UAV or hardware focus; UAV path
+        planning, swarm formation or communication without sensor fusion or
+        state estimation; FPGA accelerators for unrelated workloads such as
+        neural network inference in data centers, cryptography or networking;
+        drone imagery used only as a dataset for image classification.
+    accept_threshold: 0.8
+    reject_threshold: 0.2
+
+  - name: areas
+    type: choice
+    instructions: Which combination of the three areas does this paper cover?
+    criteria:
+      Fusion and UAV: >-
+        Multi-sensor fusion or state estimation for UAVs or UAV swarms,
+        without a hardware implementation focus
+      Fusion and hardware: >-
+        Sensor fusion or state estimation implemented on FPGA, SoC FPGA or
+        other embedded accelerators, not specifically for UAVs
+      UAV and hardware: >-
+        UAV or swarm navigation, perception or control on FPGA, SoC FPGA or
+        embedded accelerators, without multi-sensor fusion
+      All three: >-
+        Sensor fusion for UAV or swarm navigation, implemented on FPGA, SoC
+        FPGA or embedded accelerators
+    tag_threshold: 0.25
+    min_confidence: 0.5
+
+  - name: fusion_method
+    type: choice
+    instructions: Which kind of sensor fusion or state estimation does the paper use?
+    criteria:
+      Classical filtering: Kalman, extended or unscented Kalman, complementary or particle filters with fixed parameters
+      Adaptive fusion: >-
+        Fusion that adapts to conditions, for example adaptive noise
+        covariances, sensor fault detection and isolation, switching or
+        reweighting sensors when one degrades or drops out
+      Optimization-based: Factor graphs, sliding-window or bundle-adjustment optimization, pose graph SLAM
+      Learning-based: Neural networks that fuse sensors or estimate state, or learn fusion weights
+      Distributed or cooperative: Estimation shared across several vehicles, consensus or collaborative localization
+      No fusion: The paper does not fuse sensors or estimate state
+    tag_threshold: 0.25
+    min_confidence: 0.5
+
+  - name: sensors
+    type: choice
+    instructions: Which sensors does the paper mainly fuse or use for navigation?
+    criteria:
+      GNSS and IMU: Satellite navigation with inertial sensors
+      Visual or visual-inertial: Cameras, alone or with an IMU, including stereo and event cameras
+      LiDAR: LiDAR, alone or with other sensors
+      Radio ranging: UWB, radio, WiFi or 5G ranging or signals of opportunity between vehicles or beacons
+      Radar or other: Radar, mmWave, magnetometers, barometers, thermal or acoustic sensors
+      Not specific: No particular sensors, or a general framework
+    tag_threshold: 0.25
+    min_confidence: 0.5
+
+  - name: platform
+    type: choice
+    instructions: On which computing platform does the paper run or evaluate its method?
+    criteria:
+      SoC FPGA: An FPGA with integrated processors, such as Xilinx/AMD Zynq, Zynq UltraScale+ MPSoC, Versal or Intel/Altera SoC FPGA
+      FPGA: A standalone FPGA without integrated processors, or FPGA logic without saying which
+      Embedded GPU: NVIDIA Jetson or another embedded GPU
+      Microcontroller or CPU: A microcontroller, flight controller or embedded CPU, such as STM32, PX4 or Raspberry Pi
+      ASIC or neuromorphic: A custom chip, ASIC or neuromorphic processor
+      Not specified: Simulation or a desktop computer, or the platform is not stated
+    tag_threshold: 0.25
+    min_confidence: 0.5
