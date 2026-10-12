@@ -163,3 +163,17 @@ def test_cli_evaluate_prints_a_table(llama_server, tmp_path, capsys):
     assert main(["evaluate", "--backend", "local", "--config", str(config)]) == 0
     out = capsys.readouterr().out
     assert "found" in out and "100.0%" in out
+
+
+def test_evaluate_explains_what_to_run_for_a_new_topic(tmp_path, caplog):
+    from scanner.cli import main
+
+    config = tmp_path / "new.yaml"
+    config.write_text(
+        f"topic: New topic\ndata_dir: {tmp_path / 'data'}\nsource:\n  categories: [cs.RO]\n"
+        "stages:\n  - name: relevance\n    type: noul\n    instructions: Relevant?\n"
+    )
+
+    assert main(["evaluate", "--config", str(config)]) == 1
+    assert "No papers scanned yet for 'New topic'" in caplog.text
+    assert f"scan --config {config} --backend jev" in caplog.text

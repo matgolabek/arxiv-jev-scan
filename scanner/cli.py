@@ -263,7 +263,16 @@ def run_labels_import(args, profile, db) -> int:
 def run_evaluate(args, profile, db) -> int:
     path = Path(args.file or profile.dataset_dir / "test.jsonl")
     if not path.is_file():
-        raise RuntimeError(f"No dataset file at {path}. Run 'export-dataset --test-size 300' first.")
+        config = "" if args.config == "config/stages.yaml" else f" --config {args.config}"
+        if db.totals()["papers"] == 0:
+            raise RuntimeError(
+                f"No papers scanned yet for '{profile.topic}'. Scan with Jev first "
+                f"(python -m scanner.cli scan{config} --backend jev --since YYYY-MM-DD), "
+                f"then run 'python -m scanner.cli export-dataset{config} --test-size 300'."
+            )
+        raise RuntimeError(
+            f"No dataset file at {path}. Run 'python -m scanner.cli export-dataset{config} --test-size 300' first."
+        )
     stage = relevance_stage(profile)
     if args.accept is not None:
         stage.accept_threshold = args.accept
