@@ -49,8 +49,11 @@ stages:
         state estimation; FPGA accelerators for unrelated workloads such as
         neural network inference in data centers, cryptography or networking;
         drone imagery used only as a dataset for image classification.
-    accept_threshold: 0.8
-    reject_threshold: 0.2
+    # Lower than the usual 0.8 / 0.2: the local model trained on event cameras
+    # answers this question with middling probabilities and never reaches 0.8.
+    # These also apply to Jev scans, so Jev accepts more borderline papers too.
+    accept_threshold: 0.4
+    reject_threshold: 0.25
 
   - name: areas
     type: choice
