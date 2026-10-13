@@ -203,6 +203,7 @@ def run_export(args, profile, db) -> int:
 
 def run_export_dataset(args, profile, db) -> int:
     out_dir = args.out or profile.dataset_dir
+    log.info("Exporting '%s' (%s) to %s", profile.topic, args.config, out_dir)
     summary = export_dataset(db, profile, out_dir, test_size=args.test_size)
     for split in ("train", "test"):
         log.info(
