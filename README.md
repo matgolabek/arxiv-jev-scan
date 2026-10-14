@@ -25,6 +25,9 @@ other devices, and no servers or accounts beyond a Jev API key.
 - Downloads PDFs one at a time or all at once, with polite rate limiting.
 - Draws a network graph of related papers.
 - Exports accepted papers as Markdown notes with YAML frontmatter, ready for Obsidian.
+- Builds a training dataset from Jev's answers and your own labels, and runs scans on a free local
+  decision model instead of Jev once you have trained one (see "Labelling papers and building a
+  training dataset" below).
 
 ## Requirements
 
@@ -375,20 +378,24 @@ The design decisions and their trade-offs are written up in
 ## Project layout
 
 ```
-config/stages.yaml        topic, categories and pipeline stages
+config/stages.yaml        topic, categories and pipeline stages (event cameras)
+config/uav-fpga-fusion.yaml  a second example profile with several sub-topic stages
 scanner/
   sources/base.py         PaperSource interface
   sources/arxiv.py        arXiv OAI-PMH harvester
-  jev_client.py           Jev calls through the official typesafe-sdk, cost accounting
+  jev_client.py           Jev or a local llama.cpp model through the official typesafe-sdk, cost accounting
   pipeline.py             dedup, stages, thresholds, checkpoints
   db.py                   SQLite schema and queries
   pdfs.py                 single and bulk PDF downloads
   exporters/obsidian.py   Markdown export
-  exporters/dataset.py    training dataset export (train.jsonl, test.jsonl)
+  exporters/dataset.py    training dataset export (train.jsonl, test.jsonl), Hugging Face upload
+  evaluate.py             scores a backend on the test set the way a scan asks
   notify.py               desktop notification
   cli.py                  command line interface
 app.py                    Streamlit dashboard
 graph_view.py             NetworkX + Pyvis graph
+notebooks/train_decision_model.ipynb   Colab notebook: fine-tune Laya and Qwen, export GGUF
+docs/training-results.md  results of the training runs so far
 tests/                    pytest suite, no network or API key needed
 ```
 

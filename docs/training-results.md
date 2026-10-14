@@ -4,8 +4,8 @@
 
 **Result: fine-tuned Qwen3.5-0.8B finds 94.7% of the relevant papers with no wrong accepts on the
 test set, and about 0.5 wrong accepts per 1,000 scanned papers.** This run trained and tested with
-one question per request, the way a scan asks (see the first run for why that matters). The GGUF
-still has to be checked with `python -m scanner.cli evaluate --backend local`.
+one question per request, the way a scan asks (see the first run for why that matters). The GGUF,
+checked with `python -m scanner.cli evaluate --backend local`, gives the same numbers.
 
 300 test papers (150 relevant), thresholds accept 0.8 / reject 0.2. False accepts are measured on
 2,000 rejected papers no model trained on, scaled to your real mix of papers (over 99% irrelevant).
@@ -45,6 +45,22 @@ overconfident on the borderline papers.
 - Unsloth's GGUF export failed in this session (`No module named 'gguf.scripts'`), so the model was
   converted with llama.cpp's own converter, and the upload skipped the new file. The notebook now
   falls back to the converter of llama.cpp b11443 by itself and uploads the file as `qwen-q8_0.gguf`.
+
+## The event camera model on a new topic, without retraining
+
+The second-run Qwen, asked the relevance question of `config/uav-fpga-fusion.yaml` (sensor fusion,
+UAV swarms and SoC FPGAs, at least two of the three) on 64 test papers, 14 of them relevant:
+
+| Thresholds | Found | Precision | Maybe |
+|---|---:|---:|---:|
+| accept 0.8 / reject 0.2 | 85.7% | - (nothing accepted) | 31.2% |
+| accept 0.8 / reject 0.1 | 100% | - (nothing accepted) | 46.9% |
+| accept 0.5 / reject 0.2 | 85.7% | 85.7% | 20.3% |
+
+The model still ranks relevant papers above irrelevant ones, but it is never sure: no paper reaches
+0.8, and around a third of the irrelevant papers land in "maybe". A model fine-tuned on one question
+does not replace Jev for another one; each topic needs its own training data. The test set is small
+(one paper moves "found" by 7 points).
 
 ## First run: two questions for relevant papers
 
@@ -147,11 +163,12 @@ suggestion is capped at 0.5 for reject and 0.1 above it for accept.
 
 ## Next steps
 
-1. Make sure `qwen-q8_0.gguf` from the second run is in
-   [the model repository](https://huggingface.co/matgolabek/arxiv-event-cameras-model); upload it
-   from Colab if the upload was skipped.
-2. Download it and check it with `python -m scanner.cli evaluate --backend local` (README, "Scanning
-   with the local model"). Its numbers should match the second run's. If they are far off, the
-   fallback conversion probably lost the calibration or the decision head.
-3. Pick the thresholds from `evaluate`'s threshold table, then run the local model next to Jev for a
-   week or two before switching Jev off.
+1. Label the borderline papers: every miss of the second run is a paper Jev left at "maybe". Decide
+   where the topic ends (spiking networks without event data, spike cameras, RGB-event trackers)
+   and write it into the relevance criteria, then label papers of those kinds.
+2. Give hand labels more weight in training, so 22 of them are not drowned out by 39,000 Jev
+   answers.
+3. Pick the thresholds from `evaluate`'s threshold table (accept 0.8 / reject 0.05 recovered two of
+   the eight misses), then run the local model next to Jev for a week or two before switching Jev
+   off.
+4. For another topic, train its own model: the event camera model does not carry over (see above).

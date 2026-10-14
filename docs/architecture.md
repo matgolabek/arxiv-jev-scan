@@ -118,6 +118,34 @@ opened).
   `gold` as JSON strings), and the state is built by the same function the scan uses, so a model
   trained on it sees exactly what Jev saw.
 
+### 8. A local decision model as a second backend
+
+The labels and the export (section 7) exist to train a free replacement for Jev. The rest of the
+tool does not change for it:
+
+- **Same API.** llama.cpp's server answers TypeSafe's System One requests at `/v1/systemone`, so
+  `JevClient` talks to it through the same `typesafe-sdk`, only with another base URL and a
+  placeholder key. `DECISION_BACKEND=local` (or `--backend local`) selects it; its cost is
+  recorded as $0 and the `model` column says which model answered. A scan checks `/health` first,
+  so a stopped server fails once with the start command instead of failing every paper.
+- **CPU-friendly defaults.** A laptop CPU needs about a second per answer, more while requests
+  share it, so the local backend waits up to `LOCAL_DECISION_TIMEOUT` (120 s) and sends 2
+  parallel requests instead of 10.
+- **One question per request, in training as in scanning.** Clef heads (Unsloth's decision head
+  on Qwen) read all questions of a request together. In the dataset, only relevant papers have
+  sub-topic questions, so a model trained or tested with all of a row's questions at once can
+  tell relevance from the number of questions. The first trained model did exactly that: perfect
+  in its notebook, 0% found in a real scan. The notebook now splits rows into one question each,
+  and `evaluate` asks the way `Pipeline.classify` does: the relevance question alone, then each
+  later stage on its own.
+- **`evaluate` decides whether a model is good enough.** It scores any backend on `test.jsonl`
+  (found, precision, maybe, sub-topics; separately for Jev's answers and your labels) and shows
+  the same numbers at other thresholds from the answers it already has, so thresholds are chosen
+  from a table rather than tuned to a handful of test papers.
+- **Training stays out of the repository's runtime.** The Colab notebook trains with Unsloth on a
+  free GPU and uploads a GGUF; the scanner only needs llama.cpp to serve it. Results of the runs
+  so far are in [training-results.md](training-results.md).
+
 ## Consequences
 
 - Getting started is easy: install, add a key, run. There is nothing to host.
@@ -125,6 +153,9 @@ opened).
   hours, but it can be interrupted and resumed at any time.
 - Changing a topic's questions does not re-classify old papers. Start a new data folder instead.
 - Keyword search is not available because OAI-PMH has none. Jev is the filter.
+- A local model learns Jev's boundary from Jev's own answers plus a few hand labels. It copies
+  Jev's clear answers well but is overconfident on the borderline papers Jev left at "maybe";
+  labelling those papers matters more than scanning more.
 
 ## Follow-ups
 
