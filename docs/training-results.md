@@ -1,9 +1,85 @@
-# Replacing Jev with a local model: first training run
+# Replacing Jev with a local model: training runs
 
-**Result: a fine-tuned Qwen3.5-0.8B agreed with Jev on all 300 test papers.** It found every
-relevant paper, accepted no irrelevant one and left nothing at "maybe". It runs locally for free and
-is published as a GGUF file for llama.cpp:
-[matgolabek/arxiv-event-cameras-model](https://huggingface.co/matgolabek/arxiv-event-cameras-model).
+## Second run: one question per request
+
+**Result: fine-tuned Qwen3.5-0.8B finds 94.7% of the relevant papers with no wrong accepts on the
+test set, and about 0.5 wrong accepts per 1,000 scanned papers.** This run trained and tested with
+one question per request, the way a scan asks (see the first run for why that matters). The GGUF,
+checked with `python -m scanner.cli evaluate --backend local`, gives the same numbers.
+
+300 test papers (150 relevant), thresholds accept 0.8 / reject 0.2. False accepts are measured on
+2,000 rejected papers no model trained on, scaled to your real mix of papers (over 99% irrelevant).
+
+| Model | Relevant found | Precision of accepts | Left at "maybe" | False accepts per 1,000 scanned | Sub-topic matches Jev |
+|---|---:|---:|---:|---:|---:|
+| Laya, zero-shot | 100% | 70.4% | 46.0% | 294 | 19.3% |
+| Laya, fine-tuned | 84.7% | 100% | 6.0% | 1.0 | 63.3% |
+| **Qwen3.5-0.8B, fine-tuned** | **94.7%** | **100%** | **1.3%** | **0.5** | **82.7%** |
+
+**Checked locally** with `python -m scanner.cli evaluate --backend local` (llama.cpp, `qwen-q8_0.gguf`
+converted with llama.cpp's own converter, CPU):
+
+| Answers from | Papers | Relevant | Found | Precision | Maybe |
+|---|---:|---:|---:|---:|---:|
+| All | 300 | 150 | 94.7% | 100% | 1.0% |
+| Jev | 283 | 133 | **100%** | 100% | 0.4% |
+| Your labels | 17 | 17 | **52.9%** | 100% | 11.8% |
+
+The GGUF matches the notebook, so the conversion kept the model and its calibration. **All 8 missed
+papers are among the 17 you labelled yourself**, papers Jev had left at "maybe": spiking neural
+networks, RGB-event multi-modal trackers without "event" in the title, a spike-camera HDR paper and
+an agent framework. Jev would have shown them to you as "maybe"; the local model rejects 6 of them
+with a probability of about 0.00, so no threshold brings them back. Lowering reject from 0.2 to 0.05
+recovers the other two (found 96.0%, maybe 1.0% to 1.7% of the test set). The model copies Jev's
+clear answers perfectly, but it has learned Jev's boundary from only 22 hand labels and is
+overconfident on the borderline papers.
+
+- Qwen misses 8 of the 150 relevant test papers. At about 8 relevant papers per 1,000 scanned,
+  0.5 false accepts means roughly one wrong paper for every 16 right ones.
+- Holdout after calibration: Qwen 97.6% accuracy (ECE 0.016), Laya 95.3% (ECE 0.020).
+- The notebook of this run suggested thresholds of accept 0.27 / reject 0.17. Ignore them: the
+  suggestion picked the lowest accept value that kept precision at 90% and moved reject to gain a
+  single paper. Qwen's probabilities sit almost all near 0 or 1, so the thresholds in between barely
+  matter. The notebook and `evaluate` now print a table of thresholds instead. Since a missed paper
+  costs more than one more "maybe" to review, keep accept at 0.8 and lower reject below 0.2.
+- Unsloth's GGUF export failed in this session (`No module named 'gguf.scripts'`), so the model was
+  converted with llama.cpp's own converter, and the upload skipped the new file. The notebook now
+  falls back to the converter of llama.cpp b11443 by itself and uploads the file as `qwen-q8_0.gguf`.
+
+## The event camera model on a new topic, without retraining
+
+The second-run Qwen, asked the relevance question of `config/uav-fpga-fusion.yaml` (sensor fusion,
+UAV swarms and SoC FPGAs, at least two of the three) on 64 test papers, 14 of them relevant:
+
+| Thresholds | Found | Precision | Maybe |
+|---|---:|---:|---:|
+| accept 0.8 / reject 0.2 | 85.7% | - (nothing accepted) | 31.2% |
+| accept 0.8 / reject 0.1 | 100% | - (nothing accepted) | 46.9% |
+| accept 0.5 / reject 0.2 | 85.7% | 85.7% | 20.3% |
+
+The model still ranks relevant papers above irrelevant ones, but it is never sure: no paper reaches
+0.8, and around a third of the irrelevant papers land in "maybe". A model fine-tuned on one question
+does not replace Jev for another one; each topic needs its own training data. The test set is small
+(one paper moves "found" by 7 points).
+
+## First run: two questions for relevant papers
+
+> **This Qwen result does not hold: the uploaded model fails in a real scan.** Qwen's Clef head
+> reads all questions of a request together. In this run, relevant papers were trained and tested
+> with two questions (relevance and sub-topic) and irrelevant papers with one, so the model learned
+> to tell relevance from the number of questions instead of from the abstract. A scan asks the
+> relevance question alone, and `python -m scanner.cli evaluate --backend local` (llama.cpp, the
+> Q8_0 GGUF, the same 300 test papers) shows the result:
+>
+> | | Found | Precision | Maybe | Sub-topic matches Jev |
+> |---|---:|---:|---:|---:|
+> | Qwen3.5-0.8B fine-tuned, one question per request | **0%** | - | 0% | 83.3% |
+>
+> Every paper got a relevance probability of about 0.00, so all 150 relevant papers were rejected.
+> The sub-topic answers still match Jev as well as in Colab, so the model file, llama.cpp and the
+> scanner work; only the relevance training was wrong. Laya answers each question on its own, so its
+> numbers below are not affected. The notebook now trains and tests with one question per request;
+> the model has to be retrained with it.
 
 | | |
 |---|---|
@@ -87,10 +163,12 @@ suggestion is capped at 0.5 for reject and 0.1 above it for accept.
 
 ## Next steps
 
-1. Re-run the current notebook to get the false-accept rate on unseen rejected papers.
-2. Add a local backend to the scanner: llama.cpp's decision server (`/v1/systemone`) serving this
-   GGUF, selected in `.env`, with $0 cost.
-3. Add an `evaluate` command that runs any backend on `test.jsonl`.
-4. Use `accept_threshold: 0.60` and `reject_threshold: 0.50` for the relevance stage when the
-   scanner runs on the local model, and run it next to Jev for a week or two before switching off
-   Jev.
+1. Label the borderline papers: every miss of the second run is a paper Jev left at "maybe". Decide
+   where the topic ends (spiking networks without event data, spike cameras, RGB-event trackers)
+   and write it into the relevance criteria, then label papers of those kinds.
+2. Give hand labels more weight in training, so 22 of them are not drowned out by 39,000 Jev
+   answers.
+3. Pick the thresholds from `evaluate`'s threshold table (accept 0.8 / reject 0.05 recovered two of
+   the eight misses), then run the local model next to Jev for a week or two before switching Jev
+   off.
+4. For another topic, train its own model: the event camera model does not carry over (see above).

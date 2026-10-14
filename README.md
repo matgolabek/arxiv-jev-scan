@@ -25,6 +25,9 @@ other devices, and no servers or accounts beyond a Jev API key.
 - Downloads PDFs one at a time or all at once, with polite rate limiting.
 - Draws a network graph of related papers.
 - Exports accepted papers as Markdown notes with YAML frontmatter, ready for Obsidian.
+- Builds a training dataset from Jev's answers and your own labels, and runs scans on a free local
+  decision model instead of Jev once you have trained one (see "Labelling papers and building a
+  training dataset" below).
 
 ## Requirements
 
@@ -248,6 +251,51 @@ secrets. It:
 
 Results of the first run, for the event camera topic: [docs/training-results.md](docs/training-results.md).
 
+#### Scanning with the local model
+
+The trained model runs in [llama.cpp](https://github.com/ggml-org/llama.cpp)'s server, which
+answers the same requests as Jev at `/v1/systemone`. You need llama.cpp release **b11443 or newer**,
+the first with decision models (`brew install llama.cpp`, `winget install llama.cpp`, or a
+[release build](https://github.com/ggml-org/llama.cpp/releases)). Start it in its own terminal:
+
+```bash
+hf download your-name/arxiv-event-cameras-model qwen-q8_0.gguf --local-dir models/event-cameras
+llama-server -m models/event-cameras/qwen-q8_0.gguf --port 8080 -c 4096 -b 4096 -ub 4096
+```
+
+- The notebook uploads the model as `<model>-q8_0.gguf`, for example `qwen-q8_0.gguf`. `models/` is
+  in `.gitignore`.
+- `-ub 4096`: a decision model reads the whole prompt in one batch, and the default of 512 tokens is
+  too small for a title, an abstract and the question.
+- On a CPU, a paper takes about a second. With an NVIDIA GPU, use a CUDA build of llama.cpp, add
+  `-ngl 99 -np 8 -c 32768` to the server and `--workers 8` to `scan` and `evaluate`.
+
+Then point the scanner at it in `.env`:
+
+```
+DECISION_BACKEND=local
+LOCAL_DECISION_URL=http://127.0.0.1:8080
+```
+
+Scans, the dashboard and `evaluate` now use the local model, and its cost is recorded as $0. The
+`model` column of each stored answer says which model gave it. `scan --backend jev` or
+`--backend local` overrides `.env` for one run. If the server is not running, the scan stops at once
+with the command to start it.
+
+Before switching, score the model on the test set the way a scan asks its questions:
+
+```bash
+python -m scanner.cli evaluate --backend local
+python -m scanner.cli evaluate --backend local --accept 0.6 --reject 0.5   # try other thresholds
+python -m scanner.cli evaluate --backend jev    # Jev on the same papers, about 300 calls
+```
+
+It prints the share of relevant papers found, the precision of accepted papers, the share left at
+"maybe" and sub-topic accuracy, separately for answers from Jev and from your own labels. A second
+table shows the same numbers at other accept and reject thresholds, computed from the same answers,
+so you can choose thresholds without asking the model again. Last, it lists the relevant papers the
+model missed and the irrelevant ones it accepted.
+
 #### Backing up your labels
 
 Your labels are the only part of this that costs your time, and they live in `papers.db`. Save
@@ -330,20 +378,24 @@ The design decisions and their trade-offs are written up in
 ## Project layout
 
 ```
-config/stages.yaml        topic, categories and pipeline stages
+config/stages.yaml        topic, categories and pipeline stages (event cameras)
+config/uav-fpga-fusion.yaml  a second example profile with several sub-topic stages
 scanner/
   sources/base.py         PaperSource interface
   sources/arxiv.py        arXiv OAI-PMH harvester
-  jev_client.py           Jev calls through the official typesafe-sdk, cost accounting
+  jev_client.py           Jev or a local llama.cpp model through the official typesafe-sdk, cost accounting
   pipeline.py             dedup, stages, thresholds, checkpoints
   db.py                   SQLite schema and queries
   pdfs.py                 single and bulk PDF downloads
   exporters/obsidian.py   Markdown export
-  exporters/dataset.py    training dataset export (train.jsonl, test.jsonl)
+  exporters/dataset.py    training dataset export (train.jsonl, test.jsonl), Hugging Face upload
+  evaluate.py             scores a backend on the test set the way a scan asks
   notify.py               desktop notification
   cli.py                  command line interface
 app.py                    Streamlit dashboard
 graph_view.py             NetworkX + Pyvis graph
+notebooks/train_decision_model.ipynb   Colab notebook: fine-tune Laya and Qwen, export GGUF
+docs/training-results.md  results of the training runs so far
 tests/                    pytest suite, no network or API key needed
 ```
 

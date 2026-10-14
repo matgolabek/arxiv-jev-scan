@@ -1,5 +1,7 @@
 # local data: database, PDFs, Obsidian notes
 data/
+# downloaded decision models (hf download ... --local-dir models/...)
+models/
 
 .env
 .venv/

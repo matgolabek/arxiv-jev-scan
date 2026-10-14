@@ -205,7 +205,7 @@ def dataset_card(profile: Profile, summary: DatasetSummary) -> str:
     )
     return f"""{header}# {profile.topic}: arXiv relevance dataset
 
-Made with [arxiv-jev-scan](https://github.com/matgolabek/arxiv-jev-scan) (`export-dataset`).
+Made with [arxiv-jev-scan](https://github.com/KJeziorek/arxiv-jev-scan) (`export-dataset`).
 Rows follow the format of Unsloth's decision-model trainer: `state` (title and abstract),
 `questions` and `gold`, each a JSON string. Gold relevance is a human label where there is one,
 otherwise Jev's decision (see `label_source`). `test` is held out and must not be trained on.
